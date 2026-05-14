@@ -1,0 +1,61 @@
+name: Bug report
+description: 不具合の報告
+labels: [bug]
+body:
+  - type: textarea
+    id: summary
+    attributes:
+      label: 概要
+      description: 何が起きたか、1〜2 行で
+    validations:
+      required: true
+  - type: textarea
+    id: repro
+    attributes:
+      label: 再現手順
+      placeholder: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 期待される挙動
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 実際の挙動
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: 影響範囲
+      multiple: true
+      options:
+        - backend (Blazor / ASP.NET Core)
+        - embedding (FastAPI)
+        - infra / docker-compose
+        - CI / GitHub Actions
+        - DB / schema
+        - docs
+    validations:
+      required: true
+  - type: textarea
+    id: env
+    attributes:
+      label: 環境
+      placeholder: |
+        OS:
+        .NET SDK:
+        Python:
+        Docker:
+  - type: textarea
+    id: logs
+    attributes:
+      label: ログ / 補足
+      render: shell

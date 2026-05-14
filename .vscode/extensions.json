@@ -1,0 +1,24 @@
+{
+  "recommendations": [
+    "ms-dotnettools.csdevkit",
+    "ms-dotnettools.csharp",
+    "ms-dotnettools.vscode-dotnet-runtime",
+    "ms-python.python",
+    "ms-python.vscode-pylance",
+    "charliermarsh.ruff",
+    "ms-python.mypy-type-checker",
+    "ms-azuretools.vscode-docker",
+    "tamasfe.even-better-toml",
+    "redhat.vscode-yaml",
+    "github.vscode-github-actions",
+    "eamodio.gitlens",
+    "EditorConfig.EditorConfig",
+    "streetsidesoftware.code-spell-checker",
+    "Anthropic.claude-code"
+  ],
+  "unwantedRecommendations": [
+    "ms-python.flake8",
+    "ms-python.black-formatter",
+    "ms-python.pylint"
+  ]
+}

@@ -1,0 +1,22 @@
+# Caddy reverse proxy config. Used on Oracle Cloud VM (Plan A).
+# Set DOMAIN env var or replace example.com.
+{$DOMAIN:example.com} {
+    encode zstd gzip
+
+    handle_path /api/embed* {
+        reverse_proxy embedding:9000
+    }
+
+    handle {
+        reverse_proxy backend:8080 {
+            header_up X-Forwarded-Proto {scheme}
+            header_up X-Forwarded-For {remote}
+        }
+    }
+
+    header {
+        Strict-Transport-Security "max-age=31536000; includeSubDomains"
+        X-Content-Type-Options "nosniff"
+        Referrer-Policy "strict-origin-when-cross-origin"
+    }
+}

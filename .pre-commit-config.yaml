@@ -1,0 +1,43 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: [--maxkb=512]
+      - id: detect-private-key
+      - id: mixed-line-ending
+        args: [--fix=lf]
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.6.9
+    hooks:
+      - id: ruff
+        args: [--fix]
+        files: ^embedding/
+      - id: ruff-format
+        files: ^embedding/
+
+  - repo: https://github.com/gitleaks/gitleaks
+    rev: v8.21.2
+    hooks:
+      - id: gitleaks
+
+  - repo: local
+    hooks:
+      - id: dotnet-format
+        name: dotnet format
+        entry: bash -c 'cd backend && dotnet format --verify-no-changes --no-restore || (echo "Run: cd backend && dotnet format" && exit 1)'
+        language: system
+        files: ^backend/.*\.(cs|csproj|razor)$
+        pass_filenames: false
+      - id: prompt-injection-scan
+        name: prompt injection scan (staged diff)
+        entry: bash -c 'if [ -f $HOME/.claude/scripts/pr-validate.py ]; then python $HOME/.claude/scripts/pr-validate.py --staged; fi'
+        language: system
+        pass_filenames: false
+        stages: [pre-commit]

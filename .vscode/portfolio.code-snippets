@@ -1,0 +1,125 @@
+{
+  "FastAPI endpoint": {
+    "scope": "python",
+    "prefix": "fa-endpoint",
+    "description": "Typed FastAPI endpoint with Pydantic request/response.",
+    "body": [
+      "@app.post(\"/${1:path}\", response_model=${2:ResponseModel})",
+      "def ${3:handler}(req: ${4:RequestModel}) -> ${2:ResponseModel}:",
+      "    ${5:pass}"
+    ]
+  },
+
+  "Pydantic model": {
+    "scope": "python",
+    "prefix": "pyd-model",
+    "description": "Pydantic v2 model with Field constraints.",
+    "body": [
+      "class ${1:Name}(BaseModel):",
+      "    ${2:field}: ${3:str} = Field(${4:min_length=1, max_length=200})"
+    ]
+  },
+
+  "pytest function": {
+    "scope": "python",
+    "prefix": "pytest-fn",
+    "description": "Minimal pytest function.",
+    "body": [
+      "def test_${1:behavior}() -> None:",
+      "    ${2:result} = ${3:call()}",
+      "    assert ${4:result == expected}"
+    ]
+  },
+
+  "Async pytest with httpx": {
+    "scope": "python",
+    "prefix": "pytest-httpx",
+    "description": "Async pytest hitting the FastAPI TestClient.",
+    "body": [
+      "def test_${1:endpoint}() -> None:",
+      "    resp = client.post(\"/${2:path}\", json={\"${3:key}\": \"${4:value}\"})",
+      "    assert resp.status_code == 200",
+      "    body = resp.json()",
+      "    assert body[\"${5:field}\"] == ${6:expected}"
+    ]
+  },
+
+  "Razor interactive page": {
+    "scope": "razor",
+    "prefix": "razor-page",
+    "description": "Blazor Server interactive page skeleton.",
+    "body": [
+      "@page \"/${1:route}\"",
+      "@rendermode InteractiveServer",
+      "@inject ${2:IService} ${3:Service}",
+      "",
+      "<PageTitle>${4:Title}</PageTitle>",
+      "",
+      "<h2>${4:Title}</h2>",
+      "",
+      "@code {",
+      "    protected override async Task OnInitializedAsync()",
+      "    {",
+      "        ${5:// load}",
+      "    }",
+      "}"
+    ]
+  },
+
+  "C# sealed record DTO": {
+    "scope": "csharp",
+    "prefix": "cs-record",
+    "description": "DTO as sealed record with required init properties.",
+    "body": [
+      "public sealed record ${1:Name}(",
+      "    ${2:string} ${3:Field}",
+      ");"
+    ]
+  },
+
+  "C# async method with CancellationToken": {
+    "scope": "csharp",
+    "prefix": "cs-async",
+    "description": "Async method with CT and ConfigureAwait omitted (ASP.NET Core).",
+    "body": [
+      "public async Task<${1:T}> ${2:NameAsync}(${3:args}, CancellationToken ct = default)",
+      "{",
+      "    ${4:// body}",
+      "}"
+    ]
+  },
+
+  "EF Core read-only query": {
+    "scope": "csharp",
+    "prefix": "ef-readonly",
+    "description": "Read-only EF Core query with AsNoTracking and tenant filter.",
+    "body": [
+      "return await _db.${1:Entities}",
+      "    .AsNoTracking()",
+      "    .Where(x => x.TenantId == tenantId)",
+      "    .${2:ToListAsync}(ct);"
+    ]
+  },
+
+  "ILogger structured log": {
+    "scope": "csharp",
+    "prefix": "log",
+    "description": "Structured log with named placeholders.",
+    "body": [
+      "_logger.Log${1|Information,Warning,Error,Debug|}(\"${2:message} {${3:Field}}\", ${3:field});"
+    ]
+  },
+
+  "Typed HttpClient": {
+    "scope": "csharp",
+    "prefix": "cs-httpclient",
+    "description": "Typed HttpClient registration in Program.cs.",
+    "body": [
+      "builder.Services.AddHttpClient<${1:IService}, ${2:ServiceImpl}>(c =>",
+      "{",
+      "    c.BaseAddress = new Uri(${3:builder.Configuration[\"X:BaseUrl\"]!});",
+      "    c.Timeout = TimeSpan.FromSeconds(${4:15});",
+      "});"
+    ]
+  }
+}

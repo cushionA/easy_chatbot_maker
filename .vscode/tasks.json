@@ -1,0 +1,54 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "backend: build",
+      "type": "shell",
+      "command": "dotnet build Portfolio.sln -c Release",
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "group": "build",
+      "problemMatcher": "$msCompile"
+    },
+    {
+      "label": "backend: test",
+      "type": "shell",
+      "command": "dotnet test Portfolio.sln -c Release --nologo",
+      "options": { "cwd": "${workspaceFolder}/backend" },
+      "group": { "kind": "test", "isDefault": true }
+    },
+    {
+      "label": "backend: format",
+      "type": "shell",
+      "command": "dotnet format Portfolio.sln",
+      "options": { "cwd": "${workspaceFolder}/backend" }
+    },
+    {
+      "label": "embedding: lint",
+      "type": "shell",
+      "command": "ruff check app tests && ruff format --check app tests",
+      "options": { "cwd": "${workspaceFolder}/embedding" }
+    },
+    {
+      "label": "embedding: test (fake)",
+      "type": "shell",
+      "command": "pytest",
+      "options": {
+        "cwd": "${workspaceFolder}/embedding",
+        "env": { "FAKE_EMBEDDER": "1" }
+      },
+      "group": "test"
+    },
+    {
+      "label": "compose: up",
+      "type": "shell",
+      "command": "docker compose up --build -d",
+      "options": { "cwd": "${workspaceFolder}" }
+    },
+    {
+      "label": "compose: down",
+      "type": "shell",
+      "command": "docker compose down",
+      "options": { "cwd": "${workspaceFolder}" }
+    }
+  ]
+}

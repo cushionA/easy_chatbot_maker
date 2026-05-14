@@ -1,0 +1,42 @@
+version: 2
+updates:
+  - package-ecosystem: nuget
+    directory: /backend/Portfolio.Web
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      aspnetcore:
+        patterns: ["Microsoft.AspNetCore.*", "Microsoft.EntityFrameworkCore*"]
+
+  - package-ecosystem: nuget
+    directory: /backend/Portfolio.Web.Tests
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 3
+
+  - package-ecosystem: pip
+    directory: /embedding
+    schedule:
+      interval: weekly
+    open-pull-requests-limit: 5
+    groups:
+      fastapi:
+        patterns: ["fastapi", "uvicorn", "pydantic"]
+      ml:
+        patterns: ["sentence-transformers", "numpy", "torch"]
+
+  - package-ecosystem: docker
+    directory: /backend
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: docker
+    directory: /embedding
+    schedule:
+      interval: weekly
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly

@@ -1,0 +1,74 @@
+name: portfolio
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-portfolio}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-changeme_dev_only}
+      POSTGRES_DB: ${POSTGRES_DB:-portfolio}
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pg_data:/var/lib/postgresql/data
+      - ./infra/db/init.sql:/docker-entrypoint-initdb.d/00_init.sql:ro
+      - ./infra/db/migrations/0001_schema.sql:/docker-entrypoint-initdb.d/01_schema.sql:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  embedding:
+    build:
+      context: ./embedding
+    restart: unless-stopped
+    environment:
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-intfloat/multilingual-e5-base}
+      EMBEDDING_DEVICE: ${EMBEDDING_DEVICE:-cpu}
+    ports:
+      - "${EMBEDDING_PORT:-9000}:9000"
+    volumes:
+      - hf_models:/models
+
+  backend:
+    build:
+      context: ./backend
+    restart: unless-stopped
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embedding:
+        condition: service_started
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Production}
+      ASPNETCORE_URLS: http://+:8080
+      ConnectionStrings__Postgres: Host=postgres;Port=5432;Database=${POSTGRES_DB:-portfolio};Username=${POSTGRES_USER:-portfolio};Password=${POSTGRES_PASSWORD:-changeme_dev_only}
+      Embedding__BaseUrl: http://embedding:9000
+    ports:
+      - "${BACKEND_PORT:-8080}:8080"
+
+  caddy:
+    image: caddy:2-alpine
+    profiles: [prod]
+    restart: unless-stopped
+    depends_on:
+      - backend
+      - embedding
+    ports:
+      - "80:80"
+      - "443:443"
+      - "443:443/udp"
+    environment:
+      DOMAIN: ${DOMAIN:-example.com}
+    volumes:
+      - ./infra/caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+      - caddy_config:/config
+
+volumes:
+  pg_data:
+  hf_models:
+  caddy_data:
+  caddy_config:

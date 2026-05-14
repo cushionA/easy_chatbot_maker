@@ -1,0 +1,42 @@
+@page "/"
+@rendermode InteractiveServer
+@inject Portfolio.Web.Services.IEmbeddingClient Embedding
+
+<PageTitle>Service A - 起票RAG</PageTitle>
+
+<h2>動作確認</h2>
+
+<p>テキストを入力して embedding 次元数を取得します。</p>
+
+<input @bind="query" placeholder="質問を入力" style="width:60%" />
+<button @onclick="RunAsync" disabled="@busy">取得</button>
+
+@if (!string.IsNullOrEmpty(message))
+{
+    <pre>@message</pre>
+}
+
+@code {
+    private string query = "印刷ができません";
+    private string message = string.Empty;
+    private bool busy;
+
+    private async Task RunAsync()
+    {
+        if (string.IsNullOrWhiteSpace(query)) return;
+        busy = true;
+        try
+        {
+            var vec = await Embedding.EmbedAsync(query);
+            message = $"dim = {vec.Length}, first3 = [{vec[0]:F4}, {vec[1]:F4}, {vec[2]:F4}]";
+        }
+        catch (Exception ex)
+        {
+            message = $"エラー: {ex.Message}";
+        }
+        finally
+        {
+            busy = false;
+        }
+    }
+}
