@@ -20,6 +20,7 @@
 | [07_data_strategy.md](07_data_strategy.md) | データ配置3層、最小化戦略 |
 | [08_features.md](08_features.md) | MVP / Phase 2 / Phase 3 機能リスト |
 | [09_task_split.md](09_task_split.md) | 座布団さん自身が書く部分 vs AI に任せる部分 |
+| [sprint1_plan.md](sprint1_plan.md) | Sprint 1 を 3 日分に分解した実装計画（2026-05-17〜19） |
 | [10_existing_streamlit.md](10_existing_streamlit.md) | 既存 Streamlit 版からの流用・発展 |
 | [11_open_questions.md](11_open_questions.md) | 未確定の運用判断・要検証項目 |
 | [12_interview_narratives.md](12_interview_narratives.md) | 面接訴求ポイント集 |

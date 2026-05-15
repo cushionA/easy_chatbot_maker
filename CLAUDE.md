@@ -33,6 +33,13 @@ make secrets       # gitleaks
 
 詳細ターゲットは `make help` で一覧。
 
+## プロジェクト固有スキル（`.claude/skills/`）
+
+- **`sprint-plan`** — Sprint ゴールから `design/sprintN_plan.md` と `design/sprintN/dayX.md` を生成。タスク 1 PR 粒度に分解し [自分]/[AI] 委譲タグを付ける。
+- **`pair-start`** — `design/sprint*/day*.md` からタスクを 1 つ選んで伴走モードでペアプロ開始。前提確認を実機チェックしてから 1 ステップずつ進める。
+
+参照実装は [`design/sprint1_plan.md`](design/sprint1_plan.md) と [`design/sprint1/`](design/sprint1/)。
+
 ## CI / pre-commit
 
 - `.github/workflows/ci.yml`: backend (dotnet) / embedding (ruff + mypy + pytest) / docker-build / pr-security の 4 ジョブ。
