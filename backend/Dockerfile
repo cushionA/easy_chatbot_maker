@@ -9,7 +9,7 @@ RUN dotnet restore Portfolio.Web/Portfolio.Web.csproj
 COPY Portfolio.Web/ Portfolio.Web/
 RUN dotnet publish Portfolio.Web/Portfolio.Web.csproj -c Release -o /app /p:UseAppHost=false
 
-FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
+FROM mcr.microsoft.com/dotnet/aspnet:10.0 AS runtime
 WORKDIR /app
 COPY --from=build /app ./
 USER app
