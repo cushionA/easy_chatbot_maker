@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from typing import Any
 
 import numpy as np
 
@@ -14,8 +15,8 @@ class Embedder:
         self.model_name = model_name
         self.device = device
         self._fake = os.environ.get("FAKE_EMBEDDER") == "1"
-        self._model = None
-        self._dim = 768 if self._fake else None
+        self._model: Any = None
+        self._dim: int | None = 768 if self._fake else None
 
     def _ensure_loaded(self) -> None:
         if self._fake or self._model is not None:
@@ -42,13 +43,13 @@ class Embedder:
             raise RuntimeError("Embedder model failed to load.")
         prefixed = [f"{mode}: {t}" for t in texts]
         vecs = self._model.encode(prefixed, normalize_embeddings=True)
-        return [v.tolist() for v in vecs]
+        return [list(v) for v in vecs]
 
     def _fake_vec(self, text: str) -> list[float]:
         rng = np.random.default_rng(abs(hash(text)) % (2**32))
         v = rng.standard_normal(self._dim or 768)
         v = v / (np.linalg.norm(v) + 1e-12)
-        return v.astype(np.float32).tolist()
+        return [float(x) for x in v.astype(np.float32)]
 
 
 @lru_cache(maxsize=1)

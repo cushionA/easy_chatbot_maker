@@ -6,6 +6,7 @@ repos:
       - id: end-of-file-fixer
       - id: check-yaml
       - id: check-json
+      - id: check-toml
       - id: check-merge-conflict
       - id: check-added-large-files
         args: [--maxkb=512]
@@ -37,7 +38,7 @@ repos:
         pass_filenames: false
       - id: prompt-injection-scan
         name: prompt injection scan (staged diff)
-        entry: bash -c 'if [ -f $HOME/.claude/scripts/pr-validate.py ]; then python $HOME/.claude/scripts/pr-validate.py --staged; fi'
+        entry: python .claude/scripts/pr-validate.py --staged
         language: system
         pass_filenames: false
         stages: [pre-commit]

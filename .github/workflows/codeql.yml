@@ -25,6 +25,7 @@ jobs:
       - uses: github/codeql-action/init@v3
         with:
           languages: ${{ matrix.language }}
+          queries: security-extended
       - if: matrix.language == 'csharp'
         uses: actions/setup-dotnet@v4
         with:

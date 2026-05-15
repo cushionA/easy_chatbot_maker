@@ -59,6 +59,8 @@ jobs:
         run: ruff check app tests
       - name: Format check (ruff)
         run: ruff format --check app tests
+      - name: Type check (mypy)
+        run: mypy app
       - name: Test (pytest)
         run: pytest
 

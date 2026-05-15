@@ -5,6 +5,7 @@ Scope: applies under `embedding/`. Global rules in `~/.claude/CLAUDE.md` still a
 ## Setup / common commands
 ```bash
 python -m venv .venv
+. .venv/bin/activate              # Linux / macOS / Claude Code on the Web
 . .venv/Scripts/activate          # Windows / Git Bash
 pip install -e ".[dev]"
 

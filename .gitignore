@@ -65,3 +65,7 @@ temp/
 # ===== CI / build artifacts =====
 .ci/
 TestResults/
+coverage.xml
+*.cobertura.xml
+coverage/
+.dotnet/

@@ -91,11 +91,7 @@ ps: ## docker compose ps
 
 .PHONY: scan
 scan: ## Run prompt-injection scan on staged changes
-	@if [ -f $$HOME/.claude/scripts/pr-validate.py ]; then \
-		python $$HOME/.claude/scripts/pr-validate.py --staged; \
-	else \
-		echo "pr-validate.py not installed"; \
-	fi
+	python .claude/scripts/pr-validate.py --staged
 
 .PHONY: secrets
 secrets: ## Scan staged diff for secrets (gitleaks)

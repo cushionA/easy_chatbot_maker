@@ -1,0 +1,2 @@
+﻿# Add regex patterns here to suppress false positives
+# Example: test.*injection
