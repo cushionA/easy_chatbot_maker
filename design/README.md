@@ -2,10 +2,10 @@
 
 ## ステータス
 
-- **フェーズ**：設計フェーズ **完了** / 実装フェーズ **未着手**
+- **フェーズ**：設計フェーズ **完了** / 実装フェーズ **Sprint 0 完了、Sprint 1 着手前**
 - **対象**：Service A（RAGチャットボット生成サービス）のみ
 - **Service B（Ronkaku）**：並行度低、Service A 構築中の流用候補としてのみ意識
-- **最終更新**：2026-05-15
+- **最終更新**：2026-05-16
 
 ## ドキュメント構成
 
@@ -29,10 +29,11 @@
 | 項目 | 決定 |
 |---|---|
 | 技術スタック | C# (Blazor Server + ASP.NET Core) + Python (FastAPI Embedding) + 最小JS |
-| ホスティング | Oracle Cloud Always Free（プランA）/ Azure F1 + Supabase + HF Spaces（プランB） |
-| DB | Postgres + pgvector + Vault |
-| テナント分離 | Row Level Security (RLS) |
-| 認証 | Supabase Auth |
+| ホスティング | **Plan B 確定**: Azure App Service F1 + Supabase（Auth + Vault）+ HF Spaces。Plan A は Phase 2 課題 |
+| DB | Supabase Postgres + pgvector + Supabase Vault |
+| テナント分離 | Row Level Security (RLS) + `current_setting('app.tenant_id')` 直接方式 |
+| 認証 | Supabase Auth（JWT 検証 + JWKS）、ASP.NET Core が DB に直接接続するため `auth.uid()` は使わない |
+| DB ロール分離 | `portfolio_owner`（マイグレーション）/ `portfolio_app`（アプリ・`NOBYPASSRLS`）|
 | LLM | Gemini API（BYOK専用） |
 | Embedding | intfloat/multilingual-e5-base、サーバ計算 |
 | 検索戦略 | BM25 + Embedding ハイブリッド (RRF) + match_count 重み |
@@ -55,13 +56,19 @@
 | fan-out 起票 | 部分失敗対応が重い → Phase 2 |
 | LLM 全部依存 | コスト爆発、BYOK で利用者負担 |
 
-## 次のステップ（実装フェーズの最初の一歩）
+## 次のステップ（Sprint 1）
 
-1. Oracle Cloud Always Free アカウント取得試行
-2. `migrations/0001_init.sql` 生成（[03_db_schema.md](03_db_schema.md) から AI に書かせる）
-3. EF Core エンティティ生成（同上）
-4. プロジェクト雛形作成（ASP.NET Core + Blazor Server）
-5. FastAPI Embedding サービス雛形
+Sprint 0（DB スキーマ・EF Core エンティティ・FastAPI 雛形・Docker・CI）は 2026-05-15 に完了。次は L1 + L2 の基礎を入れる:
+
+1. Supabase プロジェクト作成（Auth + JWKS エンドポイント確認）
+2. `portfolio_owner` / `portfolio_app` 2 ロール分離の migration を追加（`0002_rls_roles.sql`）
+3. 全テーブルへの RLS ポリシー適用 migration（`0003_rls_policies.sql`）
+4. ASP.NET Core `AddJwtBearer` + テナント解決ミドルウェア
+5. EF Core `DbConnectionInterceptor` で `SET LOCAL app.tenant_id` / `app.user_id` を発行
+6. Category / KnowledgeEntry / FieldDefinition の最小 CRUD（Blazor `EditForm`）
+7. Excel 取込（既存 Streamlit 版 `data.xlsx` 流用）でデモテナントを作成
+
+Sprint 2 以降の予定は [09_task_split.md](09_task_split.md)。
 
 ---
 

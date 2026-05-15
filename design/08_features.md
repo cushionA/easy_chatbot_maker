@@ -98,7 +98,7 @@
 
 - [ ] RLS ポリシー E2E テスト（テナント間漏洩がないことの保証）
 - [ ] エラー監視（Sentry 無料枠）
-- [ ] Keep-alive ping（プランB時、Supabase 自動停止防止）
+- [ ] Keep-alive ping（Supabase Free の 7 日無操作自動停止防止、GitHub Actions cron）
 
 ## Phase 2（拡張・追加でストーリー強化）
 

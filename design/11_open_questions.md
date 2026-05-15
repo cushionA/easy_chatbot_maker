@@ -31,16 +31,12 @@
 
 ### Q. Oracle Cloud Always Free アカウントが取れるか
 
-- 日本クレカで弾かれる事例あり
-- ARM A1 の空き枠は時期により枯渇
-- 取れなければプランBへ
+**解決済み（2026-05-16）**：Plan A は採用しない方針に決定し、Plan B（Azure F1 + Supabase + HF Spaces）に確定。Plan A は Phase 2 で語る課題に格下げ。詳細は [02_architecture.md](02_architecture.md)。
 
-**着手前に試す**：未試行。最優先のアクションアイテム。
+### Q. Plan B の Supabase 自動停止対策
 
-### Q. プランB の Supabase 自動停止対策
-
-- 7日無操作で停止 → 復活は手動 or API ping
-- GitHub Actions cron で週1ping、これで停止回避できるか実機検証必要
+- 7 日無操作で停止 → 復活は手動 or API ping
+- GitHub Actions cron で週 1 ping、これで停止回避できるか実機検証必要
 
 **実装後に検証**。
 
@@ -173,7 +169,7 @@
 
 候補：
 
-1. インフラ（Oracle Cloud or Azure）セットアップ
+1. インフラセットアップ（Azure F1 + Supabase プロジェクト作成）
 2. プロジェクト雛形（Blazor Server + FastAPI Embedding）
 3. DB マイグレーション
 4. 認証・テナント管理（最小限）

@@ -56,10 +56,10 @@
 ### インフラ・運用
 
 - [ ] **GitHub Actions CI/CD YAML**（ビルド・テスト・デプロイ）
-- [ ] **Dockerfile / docker-compose.yml**（Oracle Cloud デプロイ用）
-- [ ] **Caddy 設定**（HTTPS 自動化）
-- [ ] **Sentry 連携**（エラー監視）
-- [ ] **Keep-alive ping cron**（プランB の Supabase 防停止）
+- [x] **Dockerfile / docker-compose.yml**（ローカル開発 + Plan A 切替時用）
+- [x] **Caddy 設定**（HTTPS 自動化、Plan A 移行時用の雛形）
+- [ ] **Sentry 連携**（エラー監視、Phase 2）
+- [ ] **Keep-alive ping cron**（Plan B の Supabase 防停止）
 
 ### テスト
 

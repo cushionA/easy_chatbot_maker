@@ -24,7 +24,9 @@
 
 > 「テナント分離は Schema-per-tenant ではなく Row Level Security（RLS）一択。Schema-per-tenant は無料枠で 1000 テナント管理が不可能で、RLS は Postgres 標準サポートで運用シンプル。
 >
-> 全テーブルに `tenant_id` 列を持ち、ポリシーで `auth.uid()` から所属テナントを取得して自動フィルタ。アプリ側で WHERE tenant_id = ? を書き忘れても DB が漏洩を防ぐ。**RLS ポリシーは書き間違うと漏洩につながるため、テナント間で他テナントのデータが SELECT/INSERT/UPDATE/DELETE のいずれでも見えないことを E2E で明示テストした**。」
+> 全テーブルに `tenant_id` 列を持ち、RLS ポリシーで `current_setting('app.tenant_id')` を参照して自動フィルタする方式にした。**Supabase 標準は `auth.uid()` ベースだが、これは PostgREST 経由で JWT クレームを Postgres に渡す前提**で、ASP.NET Core から直接接続する構成では機能しない。そこで認可（JWT → テナント解決）はアプリ層で完結させ、確定した `tenant_id` を EF Core の `DbConnectionInterceptor` で `SET LOCAL` してから RLS が参照する設計に倒した。
+>
+> さらに **スキーマ所有者ロールは暗黙の `BYPASSRLS` を持つ罠**があるため、マイグレーション用 `portfolio_owner` とアプリ接続用 `portfolio_app`（`NOBYPASSRLS`）を分離。**RLS ポリシーは書き間違うと漏洩につながるため、テナント間で他テナントのデータが SELECT/INSERT/UPDATE/DELETE のいずれでも見えないことを E2E で明示テストし、加えてセッション変数未設定時に空集合になるフェイルセーフ検証も入れた**。」
 
 ### 3. ハイブリッド検索
 
@@ -49,7 +51,7 @@
 
 > 「全コンポーネントを無料枠で運用し、月額 $0 を達成した。
 >
-> - フロント・バックエンド：Azure App Service F1 または Oracle Cloud Always Free
+> - フロント・バックエンド：Azure App Service F1（Plan A として Oracle Cloud Always Free への移行コストも見積もり済み）
 > - DB：Supabase Free（500MB、pgvector + Vault + RLS）
 > - Embedding：Hugging Face Spaces CPU
 > - LLM：BYOK（利用者の Google API キー）
@@ -126,7 +128,7 @@
 
 ### 「マルチテナントどう作ってる？」
 
-> 「Row Level Security 一択。schema-per-tenant は無料枠での運用不可、RLS は Postgres 標準で運用シンプル。JWT の `auth.uid()` から `user_tenants` 経由でテナント所属を引いて自動フィルタ。E2E テストでテナント越境がないことを担保。API キー等の特に秘匿なものは Supabase Vault で暗号化追加保管。」
+> 「Row Level Security 一択。schema-per-tenant は無料枠での運用不可、RLS は Postgres 標準で運用シンプル。Supabase Auth で発行された JWT を ASP.NET Core 側で検証してテナントを解決し、EF Core の接続インターセプタで `SET LOCAL app.tenant_id` を発行、RLS ポリシーがそれを参照する方式にした。`auth.uid()` ベースではなくセッション変数直接方式に倒したのは、ASP.NET Core が Postgres に直接接続する構成だから。E2E テストでテナント越境がないことを担保。API キー等の特に秘匿なものは Supabase Vault で暗号化追加保管。」
 
 ### 「LLM はどう使ってる？」
 

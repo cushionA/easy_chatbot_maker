@@ -74,68 +74,53 @@
 
 ## ホスティング構成
 
-### プランA：Oracle Cloud Always Free（推奨・最強）
+> **採用構成: Plan B 確定**。Plan A（Oracle Cloud 自前運用）は MVP では追わず、Phase 2 で語る課題に格下げ。理由: 認証/Vault の自前実装（ASP.NET Core Identity / pgsodium 直叩き）はコア機能の実装時間を奪い、採用訴求にもならないため。
 
-| 項目 | 内容 |
-|---|---|
-| VM | ARM Ampere A1、最大4コア・24GB RAM |
-| ストレージ | 200GB |
-| 転送量 | 10TB/月 |
-| 期限 | 永続無料 |
+### Plan B（採用構成）: Azure F1 + Supabase + HF Spaces
 
-**1台に全部載せる**：
+| 役割 | サービス | 無料枠 |
+|---|---|---|
+| Blazor フロント | Azure App Service F1 | 60分CPU/日、コールドスタートあり |
+| Embedding 推論 | Hugging Face Spaces (CPU) | 制限あるが ML 用途で実績 |
+| DB / Auth / Vault | Supabase Free | 500MB DB、50,000 MAU、pgsodium 同梱 |
+| Keep-alive ping | GitHub Actions cron | 寝防止用 |
+
+**運用上の手当て**:
+- GitHub Actions cron で 15 分おきにヘルスチェック（無料枠 60 分 CPU/日 との兼合いを見ながら）
+- Supabase は 7 日無操作で自動一時停止 → 週 1 で API ping
+- 採用面接前夜は手動で warm-up
+
+**接続パターン**:
+- ASP.NET Core は Supabase Postgres に**直接接続**（PostgREST は経由しない）
+- 認証は Supabase Auth の JWT 検証のみ利用、`auth.uid()` ベースの RLS は使わない（[04_security_multitenant.md](04_security_multitenant.md) 参照）
+
+### Plan A（Phase 2 課題）: Oracle Cloud Always Free に移行する場合
+
+参考まで、Plan A に切替えた場合の構成:
 
 ```
 Oracle Cloud Always Free VM (24GB RAM)
 └ Docker Compose
    ├ Blazor Server コンテナ（ASP.NET Core）
    ├ FastAPI Embedding コンテナ
-   ├ Postgres + pgvector コンテナ
+   ├ Postgres + pgvector コンテナ（pgsodium 自前セットアップ）
    └ Caddy（HTTPS 自動）
 ```
 
-**メリット**：
-- 寝ない（コールドスタートなし）
-- 24GB RAM で Embedding モデルも余裕
-- 月額 $0
+**Plan A の魅力**: コールドスタートなし、24GB RAM、月額 $0。**移行時の追加実装**: ASP.NET Core Identity への置換、pgsodium による Vault 相当の自前構築、ARM A1 の空き枠リトライ運用。
 
-**リスク**：
-- アカウント審査の不確実性（日本クレカ弾かれることあり）
-- ARM A1 の空き枠不足（リトライ前提）
-- アイドル時の回収ポリシー（直近7日 CPU 平均 < 20% で回収候補）
+面接で語る:
 
-### プランB：マネージドサービス組合せ（Aが取れない場合）
-
-| 役割 | サービス | 無料枠 |
-|---|---|---|
-| Blazor フロント | Azure App Service F1 | 60分CPU/日、コールドスタートあり |
-| Embedding 推論 | Hugging Face Spaces (CPU) | 制限あるが ML 用途で実績 |
-| DB / Auth / Vault | Supabase Free | 500MB DB、50,000 MAU |
-| Keep-alive ping | GitHub Actions cron | 寝防止用 |
-
-**運用上の手当て**：
-- GitHub Actions cron で15分おきにヘルスチェック（無料枠 60分CPU/日との兼合いを見ながら）
-- Supabase は 7日無操作で自動一時停止 → 週1で API ping
-- 採用面接前夜は手動で warm-up
-
-### 推奨フロー
-
-1. まず Oracle Cloud サインアップを試す（5〜10分）
-2. 通ったらラッキー、ARM VM 確保
-3. 取れなかったらプランB
-
-「両構成を経験した」ことは面接で語れる：
-
-> 「初期はマネージドサービス組合せ（Azure F1 + Supabase + HF Spaces）で運用、コールドスタートと Supabase 自動停止に対しては GitHub Actions cron で起こす運用を組んだ。後に Oracle Cloud Always Free に移行し、自前運用とマネージドの両者を比較できた」
+> 「MVP は Supabase の Auth / Vault に乗って認証・秘匿情報保管の自前実装を回避し、コア機能に時間を投資した。スケールやコスト最適化の文脈では Oracle Cloud Always Free への移行案も検討済みで、pgsodium 自前構築や Identity への置換コストまで見積もっている」
 
 ## 月額予算明細
 
-| 項目 | プランA | プランB |
+| 項目 | Plan B（採用構成） | Plan A（参考） |
 |---|---|---|
-| VM/フロント | $0（OCI Always Free） | $0（Azure F1） |
-| Embedding 推論 | $0（同上に同居） | $0（HF Spaces） |
-| DB | $0（自前 Postgres） | $0（Supabase Free） |
-| LLM | $0（利用者BYOK） | $0（同左） |
+| VM/フロント | $0（Azure F1） | $0（OCI Always Free） |
+| Embedding 推論 | $0（HF Spaces） | $0（同居） |
+| DB | $0（Supabase Free） | $0（自前 Postgres） |
+| LLM | $0（利用者 BYOK） | $0（同左） |
 | メール通知 | $0（SendGrid / Resend 無料枠） | $0 |
 | ドメイン | $10〜15/年（Cloudflare） | $10〜15/年 |
 | **合計** | **$0/月**（年 $10〜15） | **$0/月**（年 $10〜15） |

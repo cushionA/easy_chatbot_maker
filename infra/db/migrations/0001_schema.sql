@@ -239,16 +239,18 @@ CREATE TRIGGER trg_increment_match_count
     FOR EACH ROW EXECUTE FUNCTION increment_match_count();
 
 -- -----------------------------------------------------------------------
--- RLS（Row Level Security）— Sprint 1 でやること
--- design/04_security_multitenant.md を読んで自分で書く。
--- ここにコメントアウトで残しておく。
+-- RLS（Row Level Security）— Sprint 1 で別 migration（0003_rls_policies.sql）として追加する
+-- 方針は design/04_security_multitenant.md を参照。要点:
+--   * ASP.NET Core 直接接続のため auth.uid() は使わない
+--   * 全テーブルのポリシーは current_setting('app.tenant_id')::uuid 直接方式
+--   * スキーマ所有 portfolio_owner / アプリ接続 portfolio_app の 2 ロール分離
+--     （portfolio_app は NOBYPASSRLS）→ 0002_rls_roles.sql で先に作る
 --
+-- 雛形:
 -- ALTER TABLE knowledge_entries ENABLE ROW LEVEL SECURITY;
 -- CREATE POLICY tenant_isolation ON knowledge_entries
---   USING (tenant_id IN (
---     SELECT tenant_id FROM user_tenants WHERE user_id = auth.uid()
---   ));
--- 他テーブルも同様。
+--   USING       (tenant_id = current_setting('app.tenant_id')::uuid)
+--   WITH CHECK  (tenant_id = current_setting('app.tenant_id')::uuid);
 -- -----------------------------------------------------------------------
 
 -- -----------------------------------------------------------------------

@@ -242,35 +242,35 @@ CREATE INDEX ON knowledge_entries USING gin (search_text);
 
 ## RLS（テナント分離ポリシー）
 
-全テーブルに対して、JWT から取得したユーザIDで所属テナント自動フィルタ：
+ASP.NET Core から Postgres に直接接続する構成のため、`auth.uid()` は利用しない。アプリ側で JWT → `user_tenants` 照合まで済ませ、確定した `tenant_id` を `SET LOCAL app.tenant_id = ...` でセッション変数に流す。RLS ポリシーはその変数だけを参照する（設計の根拠は [04_security_multitenant.md](04_security_multitenant.md) の「なぜ `auth.uid()` ベースにしないか」参照）。
 
 ```sql
 ALTER TABLE knowledge_entries ENABLE ROW LEVEL SECURITY;
 
 CREATE POLICY tenant_isolation ON knowledge_entries
-  USING (tenant_id IN (
-    SELECT tenant_id FROM user_tenants
-    WHERE user_id = auth.uid()
-  ));
+  USING       (tenant_id = current_setting('app.tenant_id')::uuid)
+  WITH CHECK  (tenant_id = current_setting('app.tenant_id')::uuid);
 ```
 
-`categories` / `validation_rules` / `field_definitions` / `destinations` / `inquiries` / `unclassified_queue` も同様。
+`categories` / `validation_rules` / `field_definitions` / `destinations` / `inquiries` / `unclassified_queue` / `tenant_public_keys` も同じパターン。
 
-`tenants` 自体は **所属テナントのみ閲覧可能**：
+`tenants` 自体は **自分の所属テナントのみ閲覧可能**：
 
 ```sql
 CREATE POLICY tenant_self_visible ON tenants
-  USING (id IN (
-    SELECT tenant_id FROM user_tenants WHERE user_id = auth.uid()
-  ));
+  USING (id = current_setting('app.tenant_id')::uuid);
 ```
 
-`user_tenants` は **自分の所属レコードのみ閲覧可能**：
+`user_tenants` は **自分の所属レコードのみ閲覧可能**。`user_id` は JWT クレームから取った値を別セッション変数に流す：
 
 ```sql
 CREATE POLICY membership_self_visible ON user_tenants
-  USING (user_id = auth.uid());
+  USING (user_id = current_setting('app.user_id')::uuid);
 ```
+
+アプリは接続開始直後（`DbConnectionInterceptor.ConnectionOpenedAsync`）に `SET LOCAL app.user_id = ...` と `SET LOCAL app.tenant_id = ...` の 2 本を発行する。匿名ウィジェット経由のアクセス用には別変数 `app.widget_tenant_id` を使い、混線を避ける。
+
+スキーマ所有者と接続ロールを分離（`portfolio_owner` / `portfolio_app`）して `BYPASSRLS` の罠を回避すること。詳細は [04_security_multitenant.md](04_security_multitenant.md)。
 
 ## トリガー：`match_count` 更新
 
