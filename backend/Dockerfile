@@ -11,7 +11,6 @@ RUN dotnet publish Portfolio.Web/Portfolio.Web.csproj -c Release -o /app /p:UseA
 
 FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS runtime
 WORKDIR /app
-RUN groupadd -r app && useradd -r -g app app
 COPY --from=build /app ./
 USER app
 EXPOSE 8080

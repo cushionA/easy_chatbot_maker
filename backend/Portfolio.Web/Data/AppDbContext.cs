@@ -69,34 +69,44 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         {
             var tableName = entity.GetTableName();
             if (tableName is not null)
+            {
                 entity.SetTableName(ToSnakeCase(tableName));
+            }
 
             foreach (var prop in entity.GetProperties())
             {
                 var col = prop.GetColumnName();
                 if (col is not null)
+                {
                     prop.SetColumnName(ToSnakeCase(col));
+                }
             }
 
             foreach (var key in entity.GetKeys())
             {
                 var keyName = key.GetName();
                 if (keyName is not null)
+                {
                     key.SetName(ToSnakeCase(keyName));
+                }
             }
 
             foreach (var index in entity.GetIndexes())
             {
                 var dbName = index.GetDatabaseName();
                 if (dbName is not null)
+                {
                     index.SetDatabaseName(ToSnakeCase(dbName));
+                }
             }
 
             foreach (var fk in entity.GetForeignKeys())
             {
                 var constraintName = fk.GetConstraintName();
                 if (constraintName is not null)
+                {
                     fk.SetConstraintName(ToSnakeCase(constraintName));
+                }
             }
         }
     }
@@ -107,7 +117,9 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         for (var i = 0; i < input.Length; i++)
         {
             if (i > 0 && char.IsUpper(input[i]) && !char.IsUpper(input[i - 1]))
+            {
                 sb.Append('_');
+            }
             sb.Append(char.ToLowerInvariant(input[i]));
         }
         return sb.ToString();
