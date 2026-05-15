@@ -1,11 +1,11 @@
 # Caddy reverse proxy config. Used on Oracle Cloud VM (Plan A).
 # Set DOMAIN env var or replace example.com.
+#
+# Embedding service (embedding:9000) is intentionally NOT exposed here:
+# only the backend on the internal Docker network is allowed to call it,
+# so all external traffic must go through Blazor's auth/authorization.
 {$DOMAIN:example.com} {
     encode zstd gzip
-
-    handle_path /api/embed* {
-        reverse_proxy embedding:9000
-    }
 
     handle {
         reverse_proxy backend:8080 {

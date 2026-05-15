@@ -32,12 +32,16 @@ class Embedder:
             raise RuntimeError("Embedder dimension is unknown — model load failed.")
         return self._dim
 
-    def embed(self, texts: list[str]) -> list[list[float]]:
+    def embed(self, texts: list[str], mode: str = "query") -> list[list[float]]:
+        if mode not in ("query", "passage"):
+            raise ValueError(f"mode must be 'query' or 'passage', got {mode!r}")
         if self._fake:
             return [self._fake_vec(t) for t in texts]
         self._ensure_loaded()
-        prefixed = [f"query: {t}" for t in texts]
-        vecs = self._model.encode(prefixed, normalize_embeddings=True)  # type: ignore[union-attr]
+        if self._model is None:
+            raise RuntimeError("Embedder model failed to load.")
+        prefixed = [f"{mode}: {t}" for t in texts]
+        vecs = self._model.encode(prefixed, normalize_embeddings=True)
         return [v.tolist() for v in vecs]
 
     def _fake_vec(self, text: str) -> list[float]:

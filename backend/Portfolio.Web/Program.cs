@@ -17,7 +17,7 @@ dataSourceBuilder.UseVector();
 var dataSource = dataSourceBuilder.Build();
 
 builder.Services.AddDbContext<AppDbContext>(opt =>
-    opt.UseNpgsql(dataSource));
+    opt.UseNpgsql(dataSource, npg => npg.UseVector()));
 
 var embeddingBaseUrl = builder.Configuration["Embedding:BaseUrl"]
     ?? throw new InvalidOperationException("Embedding:BaseUrl is required.");
@@ -25,7 +25,7 @@ var embeddingBaseUrl = builder.Configuration["Embedding:BaseUrl"]
 builder.Services.AddHttpClient<IEmbeddingClient, EmbeddingClient>(c =>
 {
     c.BaseAddress = new Uri(embeddingBaseUrl);
-    c.Timeout = TimeSpan.FromSeconds(15);
+    c.Timeout = TimeSpan.FromSeconds(60);
 });
 
 builder.Services.AddHealthChecks();
@@ -38,7 +38,6 @@ if (!app.Environment.IsDevelopment())
     app.UseHsts();
 }
 
-app.UseHttpsRedirection();
 app.UseStaticFiles();
 app.UseAntiforgery();
 

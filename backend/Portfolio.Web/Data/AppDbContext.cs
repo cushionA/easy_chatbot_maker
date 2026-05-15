@@ -46,9 +46,16 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
             e.HasIndex(k => new { k.TenantId, k.CategoryId });
         });
 
+        modelBuilder.Entity<Destination>(e =>
+        {
+            e.Property(d => d.Config).HasColumnType("jsonb");
+            e.Property(d => d.FieldMapping).HasColumnType("jsonb");
+        });
+
         modelBuilder.Entity<Inquiry>(e =>
         {
             e.Property(i => i.QueryEmbedding).HasColumnType("vector(768)");
+            e.Property(i => i.DraftFields).HasColumnType("jsonb");
             e.HasIndex(i => new { i.TenantId, i.CreatedAt });
             e.HasIndex(i => i.MatchedKnowledgeId)
                 .HasFilter("matched_knowledge_id IS NOT NULL");

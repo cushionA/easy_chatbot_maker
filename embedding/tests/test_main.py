@@ -37,3 +37,14 @@ def test_batch_returns_vectors():
     body = resp.json()
     assert len(body["embeddings"]) == 3
     assert all(len(v) == body["dim"] for v in body["embeddings"])
+
+
+def test_embed_accepts_passage_mode():
+    resp = client.post("/embed", json={"text": "プリンタが動かない", "mode": "passage"})
+    assert resp.status_code == 200
+    assert resp.json()["dim"] > 0
+
+
+def test_embed_rejects_invalid_mode():
+    resp = client.post("/embed", json={"text": "x", "mode": "bogus"})
+    assert resp.status_code == 422

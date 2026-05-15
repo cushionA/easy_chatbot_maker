@@ -1,4 +1,3 @@
-using System.Text.Json;
 using Pgvector;
 
 namespace Portfolio.Web.Data.Entities;
@@ -20,7 +19,7 @@ public sealed class Inquiry
     public string? MatchStrategy { get; set; }
     public float? ConfidenceScore { get; set; }
     public bool? Resolved { get; set; }
-    public JsonDocument? DraftFields { get; set; }
+    public string? DraftFields { get; set; }
     public DateTimeOffset CreatedAt { get; set; }
 
     public Tenant Tenant { get; set; } = null!;

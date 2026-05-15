@@ -6,6 +6,19 @@ Web エンジニア転職用のポートフォリオ。**ナレッジ起票補�
 
 ---
 
+## 現状ステータス
+
+**Sprint 0（開発基盤）完了** — 2026-05-15 時点。動くのは以下まで:
+
+- Embedding サービス（`FastAPI` + `intfloat/multilingual-e5-base`、query/passage 切替対応）
+- Postgres スキーマ（全 10 テーブル / pgvector / トリガ）と EF Core エンティティ
+- Blazor の `Home.razor`（Embedding を 1 回叩いて次元数を表示するだけのデモ）
+- CI / CodeQL / Dependabot / pre-commit / Docker Compose / Caddy 雛形
+
+**未実装（Sprint 1 以降）**: 認証 (Supabase JWT)、RLS、ナレッジ CRUD 画面、未分類キュー、ハイブリッド検索、Redmine/GitHub Adapter、Gemini BYOK、Vault 連携。詳細ロードマップは [`design/09_task_split.md`](design/09_task_split.md)。
+
+---
+
 ## 技術スタック
 
 | レイヤー | 採用技術 |

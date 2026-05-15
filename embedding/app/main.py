@@ -21,7 +21,7 @@ def healthz() -> HealthResponse:
 @app.post("/embed", response_model=EmbedResponse)
 def embed(req: EmbedRequest) -> EmbedResponse:
     e = get_embedder()
-    vec = e.embed([req.text])[0]
+    vec = e.embed([req.text], mode=req.mode)[0]
     return EmbedResponse(embedding=vec, dim=len(vec), model=e.model_name)
 
 
@@ -30,5 +30,5 @@ def embed_batch(req: EmbedBatchRequest) -> EmbedBatchResponse:
     if any(not t.strip() for t in req.texts):
         raise HTTPException(status_code=400, detail="empty text in batch")
     e = get_embedder()
-    vecs = e.embed(req.texts)
+    vecs = e.embed(req.texts, mode=req.mode)
     return EmbedBatchResponse(embeddings=vecs, dim=len(vecs[0]), model=e.model_name)
