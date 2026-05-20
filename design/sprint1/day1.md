@@ -219,11 +219,11 @@ psql "$env:SUPABASE_DB_URL_APP" -c "SELECT title FROM knowledge_entries;"
 
 ## Day 1 終了チェックリスト
 
-- [ ] Supabase プロジェクトが動く
-- [ ] スキーマ（10 テーブル）が Supabase に存在
-- [ ] `portfolio_owner` / `portfolio_app` の 2 ロール、`portfolio_app` は `NOBYPASSRLS`
-- [ ] `knowledge_entries` の RLS が 3 ケース（A/B/未設定）すべて期待通り
-- [ ] `.env.local` に `SUPABASE_URL` / `SUPABASE_JWKS_URL` / `SUPABASE_JWT_SECRET` / `SUPABASE_DB_URL_OWNER` / `SUPABASE_DB_URL_APP` が揃う
+- [x] Supabase プロジェクトが動く
+- [x] スキーマ（10 テーブル）が Supabase に存在
+- [x] `portfolio_owner` / `portfolio_app` の 2 ロール、`portfolio_app` は `NOBYPASSRLS`
+- [x] `knowledge_entries` の RLS が 3 ケース（A/B/未設定）すべて期待通り
+- [x] `.env.local` に `SUPABASE_URL` / `SUPABASE_JWKS_URL` / `SUPABASE_JWT_SECRET` / `SUPABASE_DB_URL_OWNER` / `SUPABASE_DB_URL_APP` が揃う
 
 ## Day 2 への引き継ぎメモ（自分宛て）
 

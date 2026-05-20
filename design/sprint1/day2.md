@@ -42,10 +42,10 @@ infra/db/migrations/0003_rls_policies.sql に knowledge_entries の RLS ポリ�
 ```
 
 **自分の確認ポイント（コードを見るとき）**
-- [ ] 全テーブルに `FORCE ROW LEVEL SECURITY` が入っている
-- [ ] `user_tenants` のポリシーが `tenant_id` ではなく `user_id` 基準になっている
-- [ ] `tenants` のポリシーが `user_tenants` をサブクエリで参照している
-- [ ] AI が勝手にポリシー名を変えていない
+- [x] 全テーブルに `FORCE ROW LEVEL SECURITY` が入っている
+- [x] `user_tenants` のポリシーが `tenant_id` ではなく `user_id` 基準になっている
+- [x] `tenants` のポリシーが `user_tenants` をサブクエリで参照している
+- [x] AI が勝手にポリシー名を変えていない
 
 **完了確認**
 ```powershell
