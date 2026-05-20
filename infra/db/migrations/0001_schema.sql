@@ -84,6 +84,15 @@ CREATE TABLE IF NOT EXISTS field_definitions (
     UNIQUE (tenant_id, code)
 );
 
+-- to_tsvector('simple'::regconfig, ...) は Supabase Postgres で STABLE 扱いされるため
+-- IMMUTABLE wrapper 経由で生成列に使用する
+CREATE OR REPLACE FUNCTION make_search_tsvector(name text, kw text[], eq text[])
+RETURNS tsvector LANGUAGE sql IMMUTABLE AS $$
+  SELECT to_tsvector('simple', name || ' ' ||
+    translate(kw::text, '{}", ', '      ') || ' ' ||
+    translate(eq::text, '{}", ', '      '))
+$$;
+
 -- -----------------------------------------------------------------------
 -- knowledge_entries（最重要テーブル）
 -- -----------------------------------------------------------------------
@@ -103,11 +112,7 @@ CREATE TABLE IF NOT EXISTS knowledge_entries (
     embedding            vector(768),
     embedding_model      text,
     search_text          tsvector GENERATED ALWAYS AS (
-        to_tsvector('simple',
-            name || ' ' ||
-            array_to_string(keywords, ' ') || ' ' ||
-            array_to_string(example_queries, ' ')
-        )
+        make_search_tsvector(name, keywords, example_queries)
     ) STORED,
     created_at           timestamptz NOT NULL DEFAULT now(),
     updated_at           timestamptz NOT NULL DEFAULT now(),
