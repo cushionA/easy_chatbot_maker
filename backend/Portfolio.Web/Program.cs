@@ -83,10 +83,15 @@ builder.Services.AddRazorComponents()
     .AddInteractiveServerComponents();
 
 // ----- DB 接続 -----
-// ConnectionStrings:Postgres を読む。秘匿値なので Development は User Secrets、本番は環境変数で注入する（appsettings には置かない）。
-// ?? throw で設定漏れを起動時にクラッシュさせ、実行中の null 参照を防ぐ。
-var connectionString = builder.Configuration.GetConnectionString("Postgres")
-    ?? throw new InvalidOperationException("ConnectionStrings:Postgres is required.");
+// 接続文字列は appsettings には書かない（秘匿値）。
+// 優先順位:
+//   1) ConnectionStrings__Postgres 環境変数（本番・CI）
+//   2) SUPABASE_DB_URL_APP 環境変数（.env.local をロードした開発環境）
+// どちらもなければ起動時にクラッシュさせて設定漏れを即検知する。
+var connectionString =
+    builder.Configuration.GetConnectionString("Postgres")
+    ?? Environment.GetEnvironmentVariable("SUPABASE_DB_URL_APP")
+    ?? throw new InvalidOperationException("DB 接続文字列が未設定。SUPABASE_DB_URL_APP を .env.local に設定してください。");
 
 // NpgsqlDataSourceBuilder でベクトル型（pgvector）を有効にした接続ソースを作る。
 // UseVector() を呼ばないと Vector 型のカラムを読み書きできない。
