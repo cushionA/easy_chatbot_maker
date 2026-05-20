@@ -25,6 +25,7 @@
 | [sprint3_plan.md](sprint3_plan.md) | Sprint 3（起票: ITicketDestination + Redmine/GitHub + Vault）を 3 日分に分解した実装計画（2026-05-27〜29） |
 | [sprint4_plan.md](sprint4_plan.md) | Sprint 4（チャット UI + 動的フォーム + 3段階エスカレーション + 未分類キュー）を 3 日分に分解した実装計画（2026-06-01〜03） |
 | [sprint5_plan.md](sprint5_plan.md) | Sprint 5（埋め込みウィジェット + 利用ログ分析 + 無料枠運用）を 3 日分に分解した実装計画（2026-06-04〜06） |
+| [sprint6_plan.md](sprint6_plan.md) | Sprint 6（マスタ管理の作り込み: KnowledgeEntry リッチ編集 + FieldDefinition/ValidationRule CRUD + Excel/JSON 取込）を 2 日分に分解した実装計画（2026-06-12〜13） |
 | [10_existing_streamlit.md](10_existing_streamlit.md) | 既存 Streamlit 版からの流用・発展 |
 | [11_open_questions.md](11_open_questions.md) | 未確定の運用判断・要検証項目 |
 | [12_interview_narratives.md](12_interview_narratives.md) | 面接訴求ポイント集 |
