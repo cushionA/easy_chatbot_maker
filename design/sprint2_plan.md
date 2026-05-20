@@ -72,7 +72,7 @@
 
 | 症状 | 見るべき場所 |
 |---|---|
-| `search_text` が空 / マッチしない | [`05_search_classification.md:39-57`](05_search_classification.md)（tsvector の作り方）+ `AppDbContext.cs:40-44`（`HasComputedColumnSql`） |
+| `search_text` が空 / マッチしない | [`05_search_classification.md:39-57`](05_search_classification.md)（tsvector の作り方）+ `AppDbContext.cs` の `HasComputedColumnSql`（`make_search_tsvector(...)` ＝ `0001_schema.sql` の IMMUTABLE ラッパー） |
 | Embedding 検索で 0 件 | `embedding_model` が `current_model` と一致していない（[`05_search_classification.md:59-70`](05_search_classification.md)） |
 | query/passage の使い分け | [`embedding/CLAUDE.md`](../embedding/CLAUDE.md)（プレフィクス規約）+ `EmbeddingClient.cs:17`（`mode` 固定の落とし穴） |
 | RRF のスコアが全部同じ | rank（順位）ではなく score を式に入れている。順位 1,2,3... を使う |

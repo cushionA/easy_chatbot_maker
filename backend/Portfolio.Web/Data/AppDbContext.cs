@@ -37,9 +37,12 @@ public sealed class AppDbContext(DbContextOptions<AppDbContext> options) : DbCon
         modelBuilder.Entity<KnowledgeEntry>(e =>
         {
             e.Property(k => k.Embedding).HasColumnType("vector(768)");
+            // make_search_tsvector は infra/db/migrations/0001_schema.sql の IMMUTABLE ラッパー。
+            // Supabase では to_tsvector('simple', ...) が STABLE 扱いで生成列に直接使えないため、
+            // ラッパー関数経由にしている。ここの式は DB 側の生成列定義と完全一致させること。
             e.Property(k => k.SearchText)
                 .HasComputedColumnSql(
-                    "to_tsvector('simple', name || ' ' || array_to_string(keywords, ' ') || ' ' || array_to_string(example_queries, ' '))",
+                    "make_search_tsvector(name, keywords, example_queries)",
                     stored: true)
                 .HasColumnType("tsvector");
             e.HasIndex(k => new { k.TenantId, k.Name }).IsUnique();

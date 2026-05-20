@@ -135,12 +135,11 @@ CREATE TABLE knowledge_entries (
   -- 検索用インデックス材料
   embedding             vector(768),
   embedding_model       text,
+  -- Supabase Postgres では to_tsvector('simple', ...) が STABLE 扱いされ生成列に直接使えないため、
+  -- IMMUTABLE ラッパー make_search_tsvector(name, keywords, example_queries) 経由にする
+  -- （定義は infra/db/migrations/0001_schema.sql。EF 側 AppDbContext.HasComputedColumnSql と一致させること）。
   search_text           tsvector GENERATED ALWAYS AS (
-    to_tsvector('simple',
-      name || ' ' ||
-      array_to_string(keywords, ' ') || ' ' ||
-      array_to_string(example_queries, ' ')
-    )
+    make_search_tsvector(name, keywords, example_queries)
   ) STORED,
 
   created_at            timestamptz NOT NULL DEFAULT now(),

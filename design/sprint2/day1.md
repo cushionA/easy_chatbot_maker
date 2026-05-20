@@ -57,11 +57,11 @@ CRUD 3 ページずつを Components/Pages/Knowledge/ と Components/Pages/Field
 ハイブリッド検索の BM25 側は `knowledge_entries.search_text`（生成列）に全面的に依存する。この列が **Knowledge 登録時に自動で埋まり、日本語クエリにマッチするか**を Day2 の前に自分の手で確かめる。ここを確認せずに進むと Day2-1 の BM25 SQL がなぜ 0 件なのか切り分け不能になる。面接では「BM25 のための tsvector を生成列で持ち、`simple` 構成を選んだ理由」を語れる。
 
 **自分で書く理由**
-検索のヒット/ミスの根本原因がこの列にある。AI に「動作確認して」と投げると確認の意味が消える。生成列の定義（`AppDbContext.cs:40-44` の `HasComputedColumnSql`）と `simple` テキスト検索構成の挙動を自分で握る。
+検索のヒット/ミスの根本原因がこの列にある。AI に「動作確認して」と投げると確認の意味が消える。生成列の定義（`AppDbContext.cs` の `HasComputedColumnSql` = `make_search_tsvector(...)`）と `simple` テキスト検索構成の挙動を自分で握る。
 
 **前提確認**
 - [ ] Day1-1 で Knowledge が数件入っている
-- [ ] `backend/Portfolio.Web/Data/AppDbContext.cs:40-44` の生成列定義を読んだ（`to_tsvector('simple', name || ' ' || array_to_string(keywords, ' ') || ' ' || array_to_string(example_queries, ' '))`）
+- [ ] `backend/Portfolio.Web/Data/AppDbContext.cs` の生成列定義を読んだ（`make_search_tsvector(name, keywords, example_queries)`）。これは `infra/db/migrations/0001_schema.sql` の **IMMUTABLE ラッパー関数**で、Supabase では `to_tsvector('simple', ...)` が STABLE 扱いされ生成列に直接使えないため、ラッパー経由にしている
 - [ ] [`05_search_classification.md:39-57`](../05_search_classification.md) を読んだ
 
 **手順**
