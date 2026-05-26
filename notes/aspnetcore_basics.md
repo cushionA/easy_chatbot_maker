@@ -254,6 +254,21 @@ Blazor Server はサーバー側で UI も処理も両方持つ。フォーム�
 
 `MapPost` が必要になるのは React・Vue など別のフロントエンドから API を叩く構成のとき。
 
+### エンドポイント登録はメソッドチェーン
+
+`MapGet` / `MapPost` は **`RouteHandlerBuilder`**（そのエンドポイントの設定オブジェクト）を返す。
+返ってきた Builder に `.RequireAuthorization()` などで設定を足し、また Builder を返すので `.` で繋げられる（fluent API）。
+
+```csharp
+app.MapGet("/whoami", (HttpContext ctx) => ctx.User.Identity?.Name ?? "(no name)")
+   .RequireAuthorization()   // このエンドポイントだけ認証必須（無 / 改ざんトークンは 401）
+   .WithName("WhoAmI");      // エンドポイントに名前を付ける（任意）
+```
+
+- ハンドラ引数 `HttpContext ctx` は **型を見て自動で注入**される（DI と同じ発想）。`ctx.User` は `UseAuthentication` が確定させた認証済みユーザー。
+- 認証必須かは **登録した位置ではなく `.RequireAuthorization()` を付けたか**で決まる。`MapHealthChecks("/healthz")` は付けていないので認証不要のまま。
+- 戻り値が `void` のメソッド（`app.Run()` 等）はチェーンの終端になる。
+
 ---
 
 ## DI（依存性注入）

@@ -88,10 +88,10 @@ builder.Services.AddRazorComponents()
 //   1) ConnectionStrings__Postgres 環境変数（本番・CI）
 //   2) SUPABASE_DB_URL_APP 環境変数（.env.local をロードした開発環境）
 // どちらもなければ起動時にクラッシュさせて設定漏れを即検知する。
-var connectionString =
+var connectionString = ToNpgsqlConnectionString(
     builder.Configuration.GetConnectionString("Postgres")
     ?? Environment.GetEnvironmentVariable("SUPABASE_DB_URL_APP")
-    ?? throw new InvalidOperationException("DB 接続文字列が未設定。SUPABASE_DB_URL_APP を .env.local に設定してください。");
+    ?? throw new InvalidOperationException("DB 接続文字列が未設定。SUPABASE_DB_URL_APP を .env.local に設定してください。"));
 
 // NpgsqlDataSourceBuilder でベクトル型（pgvector）を有効にした接続ソースを作る。
 // UseVector() を呼ばないと Vector 型のカラムを読み書きできない。
@@ -156,12 +156,37 @@ app.UseAntiforgery();
 // /healthz に GET すると 200 OK を返す。認証不要。
 app.MapHealthChecks("/healthz");
 
+app.MapGet("/whoami", (HttpContext ctx) => ctx.User.Identity?.Name ?? "(no name)").RequireAuthorization();
+
 // Blazor の Razor コンポーネントをルーティングに登録する。
 // InteractiveServer = SignalR で UI 更新をリアルタイムに行うモード。
 app.MapRazorComponents<App>()
     .AddInteractiveServerRenderMode();
 
 app.Run();
+
+// Supabase/クラウド系は postgresql:// URL 形式で接続文字列を配るが、
+// Npgsql はキーワード形式しか受け付けないので詰め替える。
+static string ToNpgsqlConnectionString(string raw)
+{
+    if (!raw.StartsWith("postgresql://") && !raw.StartsWith("postgres://"))
+    {
+        return raw; // 既にキーワード形式
+    }
+
+    var uri = new Uri(raw);
+    var userInfo = uri.UserInfo.Split(':', 2);
+    var b = new NpgsqlConnectionStringBuilder
+    {
+        Host = uri.Host,
+        Port = uri.Port,
+        Username = Uri.UnescapeDataString(userInfo[0]),
+        Password = userInfo.Length > 1 ? Uri.UnescapeDataString(userInfo[1]) : null,
+        Database = uri.AbsolutePath.TrimStart('/'),
+        SslMode = SslMode.Require,
+    };
+    return b.ConnectionString;
+}
 
 // テストプロジェクトが WebApplicationFactory<Program> でこのアプリを起動するための宣言。
 // partial にすることで Program クラスをテスト側から参照できる。

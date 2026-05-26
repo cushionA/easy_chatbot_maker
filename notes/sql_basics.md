@@ -102,6 +102,25 @@ RLS が「このセッションのテナントの行だけ」に自動で絞る
 
 アプリ側で WHERE tenant_id = ? を書かなくても DB が勝手に絞ってくれる。アプリのバグで WHERE を書き忘れても漏洩しない。
 
+### 「全テーブルに WHERE を足す」イメージとの違い
+
+イメージとしては「全テーブルに `WHERE tenant_id = current_setting('app.tenant_id')` を付けている」で正しい。ただし正確には**アプリの SQL を書き換えるのではなく、Postgres が実行時にポリシー条件を自動で AND 結合する**。
+
+```sql
+-- アプリが投げる SQL
+SELECT * FROM knowledge_entries;
+
+-- Postgres が内部で実質こう実行する
+SELECT * FROM knowledge_entries
+WHERE tenant_id = current_setting('app.tenant_id', true)::uuid;
+```
+
+`WHERE` を手で書く方式との差:
+
+- **アプリ側は tenant_id を一切意識しない**（書く必要がない）
+- **回避できない** — 手書き WHERE は外したり書き忘れたりできるが、ポリシーは DB が必ず適用する。だから「最終防衛線」になる
+- **SELECT だけでなく INSERT / UPDATE / DELETE 全部に効く**（`USING` が読み取り系、`WITH CHECK` が書き込み系）
+
 ### RLS の有効化
 
 ```sql
@@ -134,7 +153,26 @@ current_setting('app.tenant_id', true)
 
 セッション変数を読み取る関数。C# 側が `SET LOCAL app.tenant_id = '...'` でセットした値をここで参照する。
 
-第2引数の `true` = 「変数が未設定なら NULL を返す（エラーにしない）」。これがフェイルセーフの鍵。
+第2引数の `true` = 「変数が未設定なら NULL を返す（エラーにしない）」。これがフェイルセーフの鍵。`false`（省略時のデフォルト）だと未設定でエラーになる。
+
+### カスタム変数はどこで定義する？
+
+`app.tenant_id` は**どこにも定義していない**。PostgreSQL は `名前空間.変数名` のようにドットを含む名前を「カスタムパラメータ」として扱い、`SET` した瞬間に存在する（`CREATE VARIABLE` 的な事前宣言は不要）。`app` という名前空間も「アプリ用」の意味で慣習的に付けているだけ。
+
+```
+work_mem        ← ドットなし = 組み込みパラメータ。未知の名前は SET でエラー
+app.tenant_id   ← ドットあり = カスタム。検証されず任意の text として保持される
+```
+
+だから「変数の定義箇所」を探しても見つからないのが正常。読み出し側（`current_setting`）が `0003_rls_policies.sql` にあり、書き込み側（`SET LOCAL`）が C# インターセプタにある、という構造になる。
+
+### SET / SET LOCAL / set_config
+
+| 書き方 | スコープ | 用途 |
+|---|---|---|
+| `SET app.x = ...` | セッション全体（接続が閉じるまで） | プール使い回しで別テナントに残ると危険 |
+| `SET LOCAL app.x = ...` | 現トランザクション内のみ、終了で自動リセット | 本プロジェクトが採用 |
+| `set_config('app.x', val, is_local)` | 第3引数で上記を切替 | 値を変数で渡せる関数版（`0002` の `set_config('app.password', ...)` で使用） |
 
 ### フェイルセーフの仕組み
 
@@ -149,9 +187,39 @@ SELECT name FROM knowledge_entries;
 
 「設定を忘れたら全部見える」ではなく「設定を忘れたら何も見えない」になる設計。失敗しても安全な方向に倒れる。
 
+### ポリシーの3パターン
+
+全テーブルに RLS を付けているが、絞り込み条件はテーブルの役割で3種類ある（`0003_rls_policies.sql`）。
+
+| テーブル | 自動で足される条件 |
+|---|---|
+| `knowledge_entries` / `categories` / `field_definitions` / `validation_rules` / `destinations` / `inquiries` / `unclassified_queue` / `tenant_public_keys` | `tenant_id = app.tenant_id` |
+| `user_tenants` | `user_id = app.user_id`（テナントではなくユーザー基準） |
+| `tenants` | 自分が所属する `tenant_id` の `IN` サブクエリ、かつ SELECT のみ |
+
+`user_tenants` は「どのユーザーがどのテナントに属するか」の対応表なので `app.user_id` で絞る。`tenants` は「自分が所属するテナントだけ可視」にし、書き込みはポリシーで許可しない。
+
 ---
 
 ## SET LOCAL（C# 側との連携）
+
+### 変数にセットする値の出どころ
+
+JWT 自体に tenant_id は入っていない（`sub = user_id` のみ）。ユーザーは複数テナントに所属しうるので、テナントは**リクエストごとに解決**する。
+
+```
+ログイン（Supabase Auth）→ JWT 発行（user_id だけ）
+    ↓
+ASP.NET Core が JWT の user_id で user_tenants を引く
+    ↓
+URL /t/{slug}/chat の slug と照合 → このリクエストのテナントを確定
+    ↓
+確定した tenant_id を HttpContext.Items に保持
+    ↓
+DB 接続のたびに SET LOCAL app.tenant_id = '<その uuid>'
+```
+
+肝は「**クライアントが名乗った tenant id は信じず、サーバが JWT → user_tenants 照合で導出した値だけを流す**」点。
 
 ### アプリが DB に接続するたびにやること
 
@@ -216,3 +284,18 @@ embedding vector(768)  -- 768次元のベクトルを保存するカラム
 ```sql
 \dx  -- 有効な拡張機能の一覧
 ```
+
+---
+
+## 現状の実装ステータス（Sprint 1 時点）
+
+RLS は「読み出し側（ポリシー）」だけ完成していて、「書き込み側（変数セット）」はまだ無い。
+
+| 部品 | 状態 |
+|---|---|
+| RLS ポリシー（`current_setting` 参照） | 済 `0003_rls_policies.sql` |
+| JWT 検証 | 済 `Program.cs`（JwtBearer 設定） |
+| テナント解決ミドルウェア（JWT → user_tenants 照合） | 未実装 |
+| `SET LOCAL` 発行（`TenantConnectionInterceptor`） | 未実装（`Program.cs` にコメントで予告のみ。`AddDbContext` に `AddInterceptors` 未接続） |
+
+つまり今アプリから接続すると `app.tenant_id` 未設定 → 全テーブル 0 行になる。これは漏洩側ではなく**フェイルセーフ側に倒れている**正常な途中状態。残作業は Sprint 1 Day2-4 の interceptor 実装。
