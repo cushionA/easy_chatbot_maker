@@ -23,10 +23,10 @@
 - [ ] `Data/Entities/Category.cs` / `KnowledgeEntry.cs` の列を確認（`Code` / `Name` / `Emoji` / `SortOrder` / `RequiredFieldCodes` / `AutoResolution` / `GuidanceMessage`）
 
 **手順**
-1. 新規 `Components/Pages/Chat/Chat.razor`:
+1. 新規 `Components/Pages/Chat/Chat.razor`。画面の型（state machine）の**骨格だけ**を以下のシグネチャに沿って自分で組む。`@switch` の各 case に何を置くかは決まっているが、各ステップの中身（子コンポーネント配置・ハンドラ）は Day4-2 以降で埋める:
    ```razor
    @page "/t/{Slug}/chat"
-   @rendermode InteractiveServer
+   @rendermode InteractiveServer   @* .NET 8 では継承されないので明示（後述 2.） *@
    @attribute [Authorize]
    @inject AppDbContext Db
 
@@ -34,22 +34,32 @@
 
    @switch (_step)
    {
-       case ChatStep.SelectCategory: /* Day4-2 の <CategoryPicker> を置く */ break;
-       case ChatStep.PickProblem:    /* Day4-3 の <ProblemCombobox> を置く */ break;
-       case ChatStep.FreeformInput:  /* Day4-4 の自然言語入力を置く */ break;
-       case ChatStep.ShowCandidates: /* Day4-5 のエスカレーション分岐へ */ break;
+       case ChatStep.SelectCategory:
+           @* ここを自分で実装: Day4-2 の <CategoryPicker> を置き、選択ハンドラを結線 *@
+           break;
+       case ChatStep.PickProblem:
+           @* ここを自分で実装: Day4-3 の <ProblemCombobox> を置く *@
+           break;
+       case ChatStep.FreeformInput:
+           @* Day4-4（AI）で自然言語入力を結線 *@
+           break;
+       case ChatStep.ShowCandidates:
+           @* Day4-5 のエスカレーション分岐へ *@
+           break;
    }
 
    @code {
        [Parameter] public string Slug { get; set; } = "";
 
-       // 画面の型: 1 セッション = 1 state machine。Blazor Server のサーバ側コンポーネント状態に持つ
+       // 画面の型: 1 セッション = 1 state machine。Blazor Server のサーバ側コンポーネント状態に持つ。
+       // この enum と遷移が後続日の差し込み口。ステップ名は自分で確定させる（Day2/Day3 で case を足す）
        private enum ChatStep { SelectCategory, PickProblem, FreeformInput, ShowCandidates }
        private ChatStep _step = ChatStep.SelectCategory;
 
-       private Guid? _categoryId;          // null = 「わからない」（全件フォールバック）
-       private string _query = "";
-       // 候補・確定 knowledge は Day4-4/4-5 で追加
+       // 各ステップ間で持ち回す状態。何を保持すべきかは「Day 2 への引き継ぎメモ」を参照して自分で決める
+       private Guid? _categoryId;   // null = 「わからない」（全件フォールバック）の意味を持たせる
+       private string _query = "";  // ③ 自然言語入力の本文
+       // 候補リスト・確定 KnowledgeEntry など、後続で必要になる状態フィールドは自分で追加
    }
    ```
 2. `@rendermode InteractiveServer` を **明示**する（.NET 8 では継承されない。[`backend/CLAUDE.md`](../../backend/CLAUDE.md)）。
@@ -82,33 +92,32 @@
 - [ ] [`05:5-8`](../05_search_classification.md)（「わからない」で全件フォールバック）を読んだ
 
 **手順**
-1. `Components/Shared/CategoryPicker.razor` を新規作成（再利用部品）:
+1. `Components/Shared/CategoryPicker.razor` を新規作成（再利用部品）。子→親の通知に `EventCallback<Guid?>` を使う最初の部品なので、シグネチャと骨格だけ示す。中身は自分で実装する:
    ```razor
    @inject AppDbContext Db
 
-   @if (_categories is null) { <p>Loading...</p> }
-   else
-   {
-       @foreach (var c in _categories)
-       {
-           <button @onclick="() => OnPick(c.Id)">@c.Emoji @c.Name</button>
-       }
-       <button @onclick="() => OnPick(null)">わからない</button>
-   }
+   @* ここを自分で実装:
+      - _categories が null ならローディング表示
+      - 各カテゴリを <button @onclick="..."> で並べる（@c.Emoji @c.Name）
+      - 末尾に「わからない」ボタンを置き、押下で OnPick(null) を呼ぶ *@
 
    @code {
+       // 親（Chat.razor）へ選択結果を返す。Guid? の null が「わからない＝全件フォールバック」の意味
        [Parameter, EditorRequired] public EventCallback<Guid?> OnSelected { get; set; }
        private List<Category>? _categories;
 
        protected override async Task OnInitializedAsync()
-           => _categories = await Db.Categories
-               .AsNoTracking().OrderBy(c => c.SortOrder).ToListAsync();
+       {
+           // ここを自分で実装: Categories を AsNoTracking + SortOrder 昇順で読む
+           // 読み取りは AsNoTracking()（backend/CLAUDE.md）。WHERE tenant_id は書かない（RLS が絞る）
+       }
 
+       // 選択を親へ伝播するだけのハンドラ（id が null なら「わからない」）
        private Task OnPick(Guid? id) => OnSelected.InvokeAsync(id);
    }
    ```
-   読み取りは `AsNoTracking()`（[`backend/CLAUDE.md`](../../backend/CLAUDE.md)）。`WHERE tenant_id` は書かない（RLS が絞る）。
-2. `Chat.razor` で `<CategoryPicker OnSelected="OnCategorySelected" />` を `SelectCategory` ステップに置き、ハンドラで `_categoryId` を保存して `_step = ChatStep.PickProblem` に進める。
+   ヒント: 読み取りは `AsNoTracking()`（[`backend/CLAUDE.md`](../../backend/CLAUDE.md)）。`WHERE tenant_id` は書かない（RLS が絞る）。並び順は `Category.SortOrder`。
+2. `Chat.razor` で `<CategoryPicker OnSelected="OnCategorySelected" />` を `SelectCategory` ステップに置き、ハンドラで `_categoryId` を保存して `_step = ChatStep.PickProblem` に進める（ハンドラ本体も自分で書く）。
 
 **完了確認**
 - [ ] 自テナントのカテゴリのみボタン表示（RLS 目視確認）
@@ -135,38 +144,37 @@
 - [ ] [`05:9-13`](../05_search_classification.md)（コンボボックス／「該当なし」で ③ へ）を読んだ
 
 **手順**
-1. `Components/Shared/ProblemCombobox.razor`:
+1. `Components/Shared/ProblemCombobox.razor`。「入力フィルタ / 選択で確定 / 該当なしで③へ」の 3 挙動を 1 部品に同居させる最初の型。シグネチャと枠だけ示すので、フィルタ・読み込み・確定/フォールバックの中身は自分で実装する:
    ```razor
    @inject AppDbContext Db
 
-   <input @bind="_filter" @bind:event="oninput" placeholder="問題名で絞り込み" />
-   <ul>
-       @foreach (var k in Filtered())
-       {
-           <li @onclick="() => OnConfirm(k)">@k.Name</li>
-       }
-       <li @onclick="OnNotFound"><em>該当なし / 見つからない</em></li>
-   </ul>
+   @* ここを自分で実装:
+      - <input> を _filter に双方向バインド（@bind:event="oninput" で 1 文字ごとに反映）
+      - Filtered() の結果を <li @onclick> で列挙し、クリックで OnConfirm(k)（= dropdown 確定）
+      - 末尾に「該当なし / 見つからない」項目を置き、クリックで OnNotFound()（= ③ 自然言語へ） *@
 
    @code {
-       [Parameter] public Guid? CategoryId { get; set; }       // null = 全件
+       [Parameter] public Guid? CategoryId { get; set; }       // null = 全件（「わからない」経由）
        [Parameter, EditorRequired] public EventCallback<KnowledgeEntry> OnSelected { get; set; }
        [Parameter, EditorRequired] public EventCallback OnFallback { get; set; }
 
        private string _filter = "";
        private List<KnowledgeEntry> _entries = [];
 
+       // CategoryId の変化に追従するため OnInitializedAsync ではなく OnParametersSetAsync で読む
        protected override async Task OnParametersSetAsync()
        {
-           var q = Db.KnowledgeEntries.AsNoTracking();
-           if (CategoryId is { } id) q = q.Where(k => k.CategoryId == id);
-           _entries = await q.OrderBy(k => k.Name).ToListAsync();
+           // ここを自分で実装: KnowledgeEntries を AsNoTracking で読む。
+           //   CategoryId が非 null のときだけ .Where(k => k.CategoryId == ...) で絞り、
+           //   null なら全件。Name 昇順で _entries に格納（tenant_id は書かない＝RLS）
        }
 
-       private IEnumerable<KnowledgeEntry> Filtered() =>
-           string.IsNullOrWhiteSpace(_filter)
-               ? _entries
-               : _entries.Where(k => k.Name.Contains(_filter, StringComparison.OrdinalIgnoreCase));
+       // 入力フィルタ: _filter が空なら全件、そうでなければ Name の部分一致（大文字小文字無視）
+       private IEnumerable<KnowledgeEntry> Filtered()
+       {
+           // ここを自分で実装
+           return _entries;
+       }
 
        private Task OnConfirm(KnowledgeEntry k) => OnSelected.InvokeAsync(k); // dropdown 確定
        private Task OnNotFound() => OnFallback.InvokeAsync();                 // ③ 自然言語へ

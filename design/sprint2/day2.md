@@ -117,34 +117,25 @@ BM25 と Embedding という **スケールの違う 2 つのスコア**を、�
 - [ ] 「score ではなく rank（順位）を式に入れる」ことを理解した（つまづき表の典型ミス）
 
 **手順**
-1. `Portfolio.Search/ReciprocalRankFusion.cs` に純粋関数として書く（`AppDbContext` 非依存）:
+1. `Portfolio.Search/ReciprocalRankFusion.cs` に純粋関数として書く（`AppDbContext` 非依存）。骨格・式だけ示す。中身は自分で実装する:
    ```csharp
    namespace Portfolio.Search;
 
    public static class ReciprocalRankFusion
    {
        // 各ランキング（順位順に並んだ候補列）を RRF で 1 本に束ねる。
-       // score は使わず順位だけ使う（BM25 と Embedding はスケールが違うため）。
+       // score は使わず順位だけ使う（BM25 と Embedding はスケールが違い、足し算できないため）。
+       // 式: RRF_score(d) = Σ_i 1 / (k + rank_i(d))   ※ rank は 1 始まり、k は標準値 60
        public static IReadOnlyList<ClassifyCandidate> Fuse(
            IReadOnlyList<IReadOnlyList<ClassifyCandidate>> rankings, int k = 60)
        {
-           var acc = new Dictionary<Guid, (string Name, double Score)>();
-           foreach (var ranking in rankings)
-           {
-               for (var rank = 0; rank < ranking.Count; rank++)   // rank は 0 始まり → +1 で 1 位
-               {
-                   var c = ranking[rank];
-                   var contrib = 1.0 / (k + rank + 1);
-                   if (acc.TryGetValue(c.KnowledgeEntryId, out var cur))
-                       acc[c.KnowledgeEntryId] = (cur.Name, cur.Score + contrib);
-                   else
-                       acc[c.KnowledgeEntryId] = (c.Name, contrib);
-               }
-           }
-           return acc
-               .Select(kv => new ClassifyCandidate(kv.Key, kv.Value.Name, kv.Value.Score, MatchStrategy.Hybrid))
-               .OrderByDescending(c => c.Score)
-               .ToList();
+           // ここを自分で実装:
+           //   1) KnowledgeEntryId をキーに、累積 RRF スコア（+ 表示名）を貯める辞書を用意
+           //   2) 各 ranking を走査し、index を rank に変換（0 始まり → +1）して 1/(k + rank) を加算
+           //      ※ ここで c.Score は使わない。使ったら BM25 と Embedding のスケール差で壊れる
+           //   3) 同じ id が複数ランキングに出たら寄与を足し込む（和集合・スコア合算）
+           //   4) ClassifyCandidate に詰め直し、累積スコアの降順に並べて返す（Strategy=Hybrid）
+           throw new NotImplementedException();
        }
    }
    ```
@@ -180,17 +171,22 @@ RRF スコアに「過去によくマッチした問題ほど少し優遇する�
 
 **手順**
 1. `match_count` を候補に渡す経路を決める。**RRF は DB 非依存に保ちたい**ので、match_count 加算は Web 側（DB を引ける層）で行う設計に倒す。Day2-1/2-2 の候補に `MatchCount` を載せるか、結合後に `KnowledgeEntryId` で引き直す。MVP は「結合後に id 群で `match_count` を 1 クエリ取得 → 加算」がシンプル
-2. `Portfolio.Search` に重み式だけ純粋関数で置く（テスト容易性）:
+2. `Portfolio.Search` に重み式だけ純粋関数で置く（テスト容易性）。骨格・式だけ示す。中身は自分で実装する:
    ```csharp
    namespace Portfolio.Search;
 
    public static class MatchCountWeighting
    {
+       // α は分類品質のチューニングポイント。1 箇所に定数で持つ（将来テナント別チューニングは Sprint 2 範囲外）。
        public const double DefaultAlpha = 0.1;
 
-       // final = rrf + α * log(1 + matchCount)。log で頭打ち（1 と 100 で 100 倍にしない）。
+       // final = rrf + α * log(1 + matchCount)。
+       // なぜ線形でなく log か: match_count=1 と 100 で 100 倍に効かせず頭打ちにするため（面接で説明する）。
        public static double Apply(double rrfScore, int matchCount, double alpha = DefaultAlpha)
-           => rrfScore + alpha * Math.Log(1 + matchCount);
+       {
+           // ここを自分で実装: 上式（rrfScore に α*log(1+matchCount) を加える）を 1 行で返す
+           throw new NotImplementedException();
+       }
    }
    ```
 3. 結合後の候補に `Apply` を適用し、`OrderByDescending(Score).Take(3)` で top-3 に整形（[`05_search_classification.md:211`](../05_search_classification.md)）

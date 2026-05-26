@@ -32,40 +32,19 @@ Day1 の匿名 API が叩けることを実機確認したうえで、Day2 で A
 
 すべて `app.tenant_id` 経路（admin がログインして見る画面）。RLS が自動で当該テナントに絞る前提なので `WHERE tenant_id = ?` は書かない。
 
-```sql
--- (A) 問い合わせ件数（日次）。週次/月次は date_trunc の単位を変えるだけ。
-SELECT date_trunc('day', created_at) AS bucket, count(*) AS n
-  FROM inquiries
- WHERE created_at >= now() - interval '30 days'
- GROUP BY 1 ORDER BY 1;
+A〜E の 5 本を**自分で SQL に起こす**。何を数えるか・どのテーブル/列・並び・閾値だけ示す。完成 SQL はここには置かない（指標を自分の言葉と SQL で説明できることが本タスクの目的）:
 
--- (B) match_strategy 分布
-SELECT coalesce(match_strategy, 'none') AS strategy, count(*) AS n
-  FROM inquiries
- GROUP BY 1 ORDER BY n DESC;
+| 指標 | 数えるもの | 主なテーブル / 列 | 並び・粒度・制約 |
+|---|---|---|---|
+| (A) 問い合わせ件数 | 日次の件数 | `inquiries` / `created_at` | `date_trunc('day', created_at)` で集計、直近 30 日。週次/月次は単位を変えるだけ |
+| (B) match_strategy 分布 | 戦略ごとの件数 | `inquiries` / `match_strategy` | NULL を `'none'` に寄せて group by、件数降順 |
+| (C) 上位 N 問題 | よく確定した問題 | `knowledge_entries` / `match_count` | `match_count` 降順 上位 10 |
+| (D) 未分類キュー推移 | 日次の流入件数 | `unclassified_queue` / `created_at` | 日次 count、直近 30 日 |
+| (E) 低確信度比率 | 全体に占める低確信の割合 | `inquiries` / `confidence_score` | `count(*) FILTER (WHERE ...)` で「低確信件数 / scored 件数」を % 化。0 除算は `nullif` で回避 |
 
--- (C) 上位 N 問題（match_count 順 = よく確定した問題）
-SELECT k.id, k.name, k.match_count
-  FROM knowledge_entries k
- ORDER BY k.match_count DESC
- LIMIT 10;
-
--- (D) 未分類キュー件数の推移（日次、status=pending の流入）
-SELECT date_trunc('day', created_at) AS bucket, count(*) AS n
-  FROM unclassified_queue
- WHERE created_at >= now() - interval '30 days'
- GROUP BY 1 ORDER BY 1;
-
--- (E) 低確信度比率: confidence_score < THRESHOLD_LOW の inquiry が全体に占める割合
---     THRESHOLD_LOW は 05_search_classification.md:97-101 の閾値に合わせる（暫定 0.5）。
-SELECT
-  count(*) FILTER (WHERE confidence_score < 0.5) AS low_n,
-  count(*) FILTER (WHERE confidence_score IS NOT NULL) AS scored_n,
-  round(100.0 * count(*) FILTER (WHERE confidence_score < 0.5)
-        / nullif(count(*) FILTER (WHERE confidence_score IS NOT NULL), 0), 1) AS low_pct
-  FROM inquiries
- WHERE created_at >= now() - interval '30 days';
-```
+ヒント:
+- (E) の閾値 `THRESHOLD_LOW` は `05_search_classification.md:97-101` の値を流用する（暫定 0.5）。**この数値をここで定義し直さない**（5-2-4 / Day3-1 と同じ値を共有する）
+- (E) は「低確信件数」と「scored 件数（`confidence_score IS NOT NULL`）」を `FILTER` で同時に数えると 1 クエリで比率が出る
 
 > 指標定義の判断: (C) は「`match_count` 順 = 起票確定が多い問題」とする。`0001_schema.sql:221-239` のトリガーが `status='created'` 確定時に `match_count` を +1 する仕様なので、これは「実際に役立った FAQ」を意味する。(E) の閾値は分類フローの `THRESHOLD_LOW` と同じ値を使う（二重定義しない）。
 

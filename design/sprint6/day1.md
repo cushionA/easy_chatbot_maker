@@ -53,46 +53,39 @@ Sprint 2 day1 で AI が作った Knowledge CRUD は「配列列をカンマ区�
 - [ ] Sprint 2 day1 の `Components/Pages/Knowledge/Edit.razor` が動く（複製の土台）
 - [ ] 配列列を `EditForm` に直接バインドできない問題と回避策（中間プロパティ）を理解（[`sprint2/day1.md:31-33`](../sprint2/day1.md)）
 
-**手順**
+**手順**（骨格とコメントだけ示す。実装ロジック本体は自分で埋める）
 1. `Components/Pages/Knowledge/Edit.razor` を改装（新規ではなく既存を昇格）。`@rendermode InteractiveServer` を明示（backend/CLAUDE.md）
-2. `FormModel` を実列に合わせて定義する（配列は `List<string>` で持ち、保存時に `ToArray()`）:
+2. `FormModel` を実列に合わせて定義する。配列列（`Keywords` / `ExampleQueries` / `RequiredFieldCodes`）は `EditForm` に直接バインドできないので **`List<string>` の中間プロパティ**で持ち、読込時に `ToList()` / 保存時に `ToArray()` で実列と橋渡しする（[`sprint2/day1.md:31-33`](../sprint2/day1.md)）。スカラー列は `Name`(`[Required, StringLength(200)]`) / `CategoryId`(`Guid`) / `AutoResolution`(`string?`) / `GuidanceMessage`(`string?`) / `TicketPriority`(`[Required]`, 既定 `"normal"`):
    ```csharp
    private sealed class FormModel
    {
-       [Required, StringLength(200)] public string Name { get; set; } = "";
-       public Guid CategoryId { get; set; }
-       public List<string> Keywords { get; set; } = new();
-       public List<string> ExampleQueries { get; set; } = new();
-       public List<string> RequiredFieldCodes { get; set; } = new();
-       public string? AutoResolution { get; set; }
-       public string? GuidanceMessage { get; set; }
-       [Required] public string TicketPriority { get; set; } = "normal";
+       // ここを自分で実装: KnowledgeEntry の編集対象列を Day1-1 の昇格リストに沿って宣言する。
+       //   - 配列列は List<string>（保存時 ToArray、読込時 ToList）
+       //   - 必須/長さ制約は DataAnnotations で（Name は Required+StringLength(200)）
+       //   - TicketPriority は既定 "normal"
    }
    ```
-3. **配列エディタを 1 つの再利用断片として書く**（`example_queries` 用に書き、`keywords` / `required_field_codes` でも使い回す）。各行に `InputText` + 「行削除」、末尾に「+ 行追加」:
+3. **配列エディタを 1 つの再利用断片として書く**（`example_queries` 用に書き、`keywords` / `required_field_codes` でも使い回す）。構造は「各行 = `InputText`（要素への双方向バインド）+ 行削除ボタン」「末尾に + 行追加ボタン」。注意点は **詰まったら** 節（ループ変数のキャプチャ、`@key`）を先に読むこと:
    ```razor
    @* ExampleQueries editor — 配列列の編集 UX のお手本。Day2 / 取込後修正でも流用する *@
-   @for (int i = 0; i < _form.ExampleQueries.Count; i++)
-   {
-       var idx = i;
-       <div>
-           <InputText @bind-Value="_form.ExampleQueries[idx]" />
-           <button type="button" @onclick="() => _form.ExampleQueries.RemoveAt(idx)">×</button>
-       </div>
-   }
-   <button type="button" @onclick="() => _form.ExampleQueries.Add(string.Empty)">+ 行追加</button>
+   @* ここを自分で実装:
+        - _form.ExampleQueries を for で回し、各要素に InputText を @bind-Value する
+        - 各行に「行削除」(RemoveAt) ボタン、末尾に「+ 行追加」(Add(string.Empty)) ボタン
+        - 再描画でフォーカスが飛ぶ問題は「詰まったら」節の対策（idx キャプチャ / @key）で回避 *@
    ```
 4. 3 段階エスカレーション列はラベルで意味を明示する（[`05_search_classification.md:117-121`](../05_search_classification.md) の表）:
    - `AutoResolution`: 「入力すると自動回答完結（起票しない）」
    - `GuidanceMessage`: 「auto_resolution が空でこれが有ると、ガイダンス → フォーム」
    - 両方空 → 直接フォーム、を注記
-5. `TicketPriority` は `InputSelect`（Day1-1 で仮決めした値）
-6. `OnSubmit` で更新し、**保存後に embedding 再計算をトリガするフック点だけ置く**（実装は Day1-4）。再計算条件（`Name`/`Keywords`/`ExampleQueries` 変化）を判定して呼ぶ:
+5. `TicketPriority` は `InputSelect`（Day1-1 で仮決めした値の選択肢を並べる）
+6. `OnSubmit` で実列を更新し、**保存後に embedding 再計算をトリガするフック点だけ置く**（実体は Day1-4 の `IKnowledgeEmbeddingUpdater`）。「再計算が要るか」は検索元（`Name` / `Keywords` / `ExampleQueries`）が変わったかで判定する:
    ```csharp
    // embedding は文書なので passage: で計算する（CLAUDE.md 横断ルール）。
    // 実体は Day1-4 の IKnowledgeEmbeddingUpdater。ここでは「再計算が要るか」を判定して呼ぶだけ。
-   if (NameOrSearchSourceChanged(entity, _form))
-       await _embeddingUpdater.RecomputeAsync(entity.Id, ct);
+   // ここを自分で実装:
+   //   1. 旧 entity 値と _form の Name/Keywords/ExampleQueries を比較する判定を書く
+   //   2. 変化があったときだけ await _embeddingUpdater.RecomputeAsync(entity.Id, ct) を呼ぶ
+   //   3. guidance_message だけ変更のケースでは呼ばれないことを完了確認で担保する
    ```
 7. 楽観ロック・エラーハンドリングは Sprint 1 day3 の `Edit.razor` と同じ扱いに揃える（[`sprint1/day3.md:209-214`](../sprint1/day3.md)）
 8. `tenant_id` は `WHERE` に書かず RLS 任せ、保存時の `TenantId` は `HttpContext.Items["TenantId"]` から（[`sprint1/day3.md:163`](../sprint1/day3.md)）

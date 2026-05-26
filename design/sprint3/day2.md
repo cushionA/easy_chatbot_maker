@@ -22,7 +22,7 @@
 - [ ] [`06_destinations.md:146-164`](../06_destinations.md) を読んだ
 
 **手順**
-1. `Portfolio.Destinations/SubmitRetryPolicy.cs` に「再試行可否の判定」と「指数バックオフ」を 1 箇所に集約する骨子を書く:
+1. `Portfolio.Destinations/SubmitRetryPolicy.cs` に「再試行可否の判定」と「指数バックオフ」を 1 箇所に集約する。**分類の境界そのものがこのタスクの中核なので、enum とシグネチャだけ示し、分岐ロジックは自分で書く**:
    ```csharp
    namespace Portfolio.Destinations;
 
@@ -31,7 +31,7 @@
    {
        Success,       // 2xx
        RetryableFail, // ネットワーク例外 / タイムアウト / 5xx / 429
-       FatalFail      // 401/403（認証・権限）/ 4xx（不正リクエスト）→ 即失敗
+       FatalFail      // 401/403（認証・権限）/ その他 4xx（不正リクエスト）→ 即失敗
    }
 
    public static class SubmitRetryPolicy
@@ -41,18 +41,20 @@
        // HttpResponseMessage / 例外 → SubmitOutcome の分類は各アダプタで使う。
        public static SubmitOutcome Classify(int? httpStatus, bool isNetworkOrTimeout)
        {
-           if (isNetworkOrTimeout) return SubmitOutcome.RetryableFail;
-           if (httpStatus is null)  return SubmitOutcome.RetryableFail;
-           var s = httpStatus.Value;
-           if (s is >= 200 and < 300) return SubmitOutcome.Success;
-           if (s is 401 or 403)       return SubmitOutcome.FatalFail; // 認証/権限は即失敗
-           if (s == 429 || s >= 500)  return SubmitOutcome.RetryableFail;
-           return SubmitOutcome.FatalFail; // その他 4xx は不正リクエスト＝即失敗
+           // ここを自分で実装: 06 章 06_destinations.md:146-164 のフローに従って分類する。
+           //   - ネットワーク例外 / タイムアウト → Retryable
+           //   - httpStatus が無い（応答取得前に失敗）→ Retryable
+           //   - 2xx → Success
+           //   - 401 / 403（認証・権限）→ Fatal（即失敗。3 回叩いても無駄）
+           //   - 429 / 5xx（一時障害）→ Retryable
+           //   - その他 4xx（不正リクエスト）→ Fatal
+           throw new NotImplementedException();
        }
 
-       // attempt は 0 始まり。バックオフは 1s, 2s, 4s（+少量ジッタは実装側で）
+       // attempt は 0 始まり。バックオフは 1s, 2s, 4s（指数 = 2^attempt 秒。+少量ジッタは実装側で）。
        public static TimeSpan Backoff(int attempt) =>
-           TimeSpan.FromSeconds(Math.Pow(2, attempt));
+           // ここを自分で実装: 2 の attempt 乗（秒）を TimeSpan で返す。
+           throw new NotImplementedException();
    }
    ```
 2. リトライ実行の小さなヘルパ（`SubmitAsync` 用）を同ファイルか別ファイルに置く。**冪等性が無い起票なので、リトライは「送信前に確実に失敗が分かったケース（接続失敗・5xx で本文未到達）」に限る**方針をコメントで明記。`Polly` を使ってもよいが、MVP は依存を増やさず自前ループで十分:
@@ -126,11 +128,9 @@
    }
    ```
 2. 優先度変換は `DestinationConfig.FieldMapping`（`JsonElement`）から引く。06 章の Redmine 例の形（`ticket_priority.field` / `ticket_priority.values[priority]`）に従う。**マッピングに無い優先度が来たら例外ではなく `normal` 相当のフォールバック**にするか、明示エラーにするかをここで決める（推奨: 設定不備として `FatalFail` 相当のエラーメッセージ）。
-3. `Program.cs`（または `AddTicketDestinations`）でこのアダプタ用の typed HttpClient を登録:
-   ```csharp
-   builder.Services.AddHttpClient<RedmineDestination>(c => c.Timeout = TimeSpan.FromSeconds(30));
-   builder.Services.AddSingleton<ITicketDestination>(sp => sp.GetRequiredService<RedmineDestination>());
-   ```
+3. `Program.cs`（または `AddTicketDestinations`）でこのアダプタ用の typed HttpClient を登録する。ヒント:
+   - `AddHttpClient<RedmineDestination>(...)` で typed HttpClient を登録し、`Timeout`（30s 程度）を設定。
+   - `AddSingleton<ITicketDestination>(...)` で同じインスタンスを `ITicketDestination` としても解決できるよう橋渡しする（`sp.GetRequiredService<RedmineDestination>()` をファクトリで返す）。これで `DestinationRegistry` が `Kind` から引ける。
    - base url はテナント設定（`PublicConfig`）由来なので、`AddHttpClient` の `BaseAddress` 固定はせず、`SubmitAsync` 内で絶対 URL を組む。
 4. **API キーは `config.SecretValue` からのみ取る**。`appsettings` や環境変数にベタ書きしない（BYOK、[`CLAUDE.md`](../../CLAUDE.md)）。ログにキーを出さない。
 

@@ -120,34 +120,34 @@ CRUD 3 ページずつを Components/Pages/Knowledge/ と Components/Pages/Field
    dotnet sln Portfolio.sln add Portfolio.Search/Portfolio.Search.csproj
    dotnet add Portfolio.Web/Portfolio.Web.csproj reference Portfolio.Search/Portfolio.Search.csproj
    ```
-2. 戻り値の型を自分で定義する（`Portfolio.Search/ClassifyCandidate.cs`）:
+2. 戻り値の型を自分で定義する（`Portfolio.Search/ClassifyCandidate.cs`）。骨格だけ示す。中身（列・引数）は自分で埋める:
    ```csharp
    namespace Portfolio.Search;
 
    // match_strategy（design 05 章の確定値）。確定後にどの段で当たったかを呼び出し側に返す。
-   public enum MatchStrategy { Keyword, Hybrid, Llm, None }
+   // ここを自分で定義: design 05 章のどの段で当たったかを表す列挙（keyword / hybrid / llm / 該当なし）
+   public enum MatchStrategy { /* ... */ }
 
-   public sealed record ClassifyCandidate(
-       Guid KnowledgeEntryId,
-       string Name,
-       double Score,
-       MatchStrategy Strategy);
+   // 1 件の候補。スコアと match_strategy を呼び出し側に返したい（だから設計擬似コードの List<KnowledgeEntry> ではなく専用 record）。
+   // ここを自分で定義: 候補を一意に識別する id、表示名、スコア、当たった段（MatchStrategy）を持つ immutable な record
+   public sealed record ClassifyCandidate(/* ... */);
 
-   public sealed record ClassifyResult(
-       IReadOnlyList<ClassifyCandidate> Candidates,
-       MatchStrategy Strategy,    // 最終的にどの段で確定/打ち切ったか
-       bool IsConfident);         // top1 が THRESHOLD_CONFIDENT 以上か
+   // 分類全体の結果。候補リスト + 最終的にどの段で確定/打ち切ったか + top1 が confident 閾値以上か。
+   // ここを自分で定義: 候補リスト、最終 Strategy、IsConfident（bool）を持つ record
+   public sealed record ClassifyResult(/* ... */);
    ```
-3. 検索段ごとのインターフェースを定義する（`Portfolio.Search/ICandidateSearch.cs`）。**実装は Day1-4 / Day2 で埋める**:
+   - 設計書の擬似コードは戻り値が `List<KnowledgeEntry>` だが、**スコアと match_strategy を呼び出し側に返したい**ので専用 record にする、という判断は前提確認で握ったとおり
+3. 検索段ごとのインターフェースを定義する（`Portfolio.Search/ICandidateSearch.cs`）。**実装は Day1-4 / Day2 で埋める**。シグネチャの設計（引数に何を載せるか）が後続全段を縛るので自分で決める:
    ```csharp
    namespace Portfolio.Search;
 
    // 1 段 = 1 つの検索ストラテジ。query は生の自然文（プレフィクス未付与）。
    public interface ICandidateSearch
    {
-       Task<IReadOnlyList<ClassifyCandidate>> SearchAsync(
-           string query, Guid tenantId, Guid? categoryId, int limit,
-           CancellationToken ct = default);
+       // ここを自分で定義: 1 メソッド SearchAsync。
+       //   - 入力: 生クエリ / tenantId / categoryId?（不明時 null で全件）/ 取得件数 limit / CancellationToken
+       //   - 出力: Task<IReadOnlyList<ClassifyCandidate>>
+       //   - tenant_id は RLS 任せ（SQL に書かない）前提だが、引数では受ける（監査・将来用）
    }
    ```
 4. `Portfolio.Search` は **EF Core エンティティに依存させない**方針を決める（DB アクセスは Web 側の実装クラスが担い、Search は式とインターフェースに集中）。この境界をコメントに 1 行残す
@@ -182,7 +182,7 @@ CRUD 3 ページずつを Components/Pages/Knowledge/ と Components/Pages/Field
 
 **手順**
 1. `Portfolio.Web/Services/ExactMatchSearch.cs` を作る（DB アクセスを伴うので Web 側に置く。`ICandidateSearch` を実装）
-2. 骨子（`Name` の完全一致 + キーワード配列の完全一致を `tsvector` ではなく素直な等価/配列包含で引く。④は「完全一致」なので `ts_rank` ではない）:
+2. 骨子だけ示す。`Name` の完全一致 + キーワード配列の完全一致を `tsvector` ではなく素直な等価/配列包含で引く（④は「完全一致」なので `ts_rank` ではない）。クエリ本体は自分で書く:
    ```csharp
    public sealed class ExactMatchSearch(AppDbContext db) : ICandidateSearch
    {
@@ -190,19 +190,18 @@ CRUD 3 ページずつを Components/Pages/Knowledge/ と Components/Pages/Field
            string query, Guid tenantId, Guid? categoryId, int limit, CancellationToken ct = default)
        {
            // tenant_id は RLS が SET LOCAL で強制するので WHERE に書かない（design 04）。
-           // categoryId が来たら段でさらに絞る。
-           var q = db.KnowledgeEntries.AsNoTracking()
-               .Where(k => k.Name == query || k.Keywords.Contains(query));
-           if (categoryId is { } cid)
-               q = q.Where(k => k.CategoryId == cid);
-
-           return await q.Take(limit)
-               .Select(k => new ClassifyCandidate(k.Id, k.Name, 1.0, MatchStrategy.Keyword))
-               .ToListAsync(ct);
+           // ここを自分で実装:
+           //   1) db.KnowledgeEntries を AsNoTracking() で読み取り専用に
+           //   2) Name の完全一致 OR Keywords 配列に query を含む（Npgsql が = ANY(keywords) に翻訳）で絞る
+           //      ※ 部分一致や ts_rank は使わない（④は完全一致のみ。部分一致は Day2 のハイブリッド）
+           //   3) categoryId が来たら CategoryId == categoryId でさらに絞る（null なら絞らない）
+           //   4) Take(limit) して ClassifyCandidate に射影（Score は exact なので最高信頼の固定値、Strategy=Keyword）
+           //   5) ToListAsync(ct)
+           throw new NotImplementedException();
        }
    }
    ```
-   - `Score = 1.0` 固定（exact は最高信頼）。`Keywords.Contains(query)` は Npgsql が `= ANY(keywords)` に翻訳する
+   - `Score` は exact なので最高信頼の固定値にする（値は自分で決める）。`Keywords.Contains(query)` は Npgsql が `= ANY(keywords)` に翻訳する点だけ押さえておく
 3. **問題名の完全一致のみ即確定**にしたいので、`Name == query` ヒットは `IsConfident` 相当として扱える設計にする（確定判定は Day3-3 の `ClassifyService` 側で `Strategy==Keyword && top1` を見る、と決めておく。ここでは候補を返すだけ）
 4. DI 登録（`Program.cs`）に `ExactMatchSearch` を追加（型付きで `AddScoped`）
 
@@ -237,19 +236,21 @@ CRUD 3 ページずつを Components/Pages/Knowledge/ と Components/Pages/Field
 
 **手順**
 1. プレフィクスの「正」がサーバ側（`embedding/app/`）にあることを確認する。**Web からは生テキスト + `mode` を送り、`query:`/`passage:` 文字列をクライアントで手付けしない**（二重付与防止）。この方針を 1 行コメントで残す
-2. `IEmbeddingClient` に mode を表す enum を導入して使い分けを型で強制する（`EmbeddingClient.cs:17` の `"query"` 即値リテラルを消す）:
+2. `IEmbeddingClient` に mode を表す enum を導入して使い分けを型で強制する（`EmbeddingClient.cs:17` の `"query"` 即値リテラルを消す）。骨格だけ示す:
    ```csharp
    namespace Portfolio.Web.Services;
 
-   public enum EmbedMode { Query, Passage }
+   // ここを自分で定義: query / passage を表す 2 値の列挙（e5 のプレフィクス規約に対応）
+   public enum EmbedMode { /* ... */ }
 
    public interface IEmbeddingClient
    {
-       Task<float[]> EmbedAsync(string text, EmbedMode mode = EmbedMode.Query,
-           CancellationToken ct = default);
+       // ここを自分で定義: EmbedAsync(string text, EmbedMode mode, CancellationToken ct) のシグネチャ。
+       //   - 戻り値はベクトル（float[]）
+       //   - mode は既定 Query にして既存呼び出し元の移行を楽にするか、必須にして付け忘れを防ぐかを自分で判断
    }
    ```
-3. `EmbeddingClient` 側で enum → `/embed` の `mode` 文字列（`"query"` / `"passage"`）に変換。`EmbedMode.Query => "query"` のマッピングを 1 箇所に閉じる
+3. `EmbeddingClient` 側で enum → `/embed` の `mode` 文字列（`"query"` / `"passage"`）に変換する。**変換（マッピング）は 1 箇所に閉じる**こと。即値 `"query"` がコードから消える状態を自分で作る
 4. 既存呼び出し元（Sprint 1 のデバッグ画面 / Seed ツールがあれば）を新シグネチャに直す。**分類クエリは必ず `EmbedMode.Query`、Knowledge の embedding 生成は `EmbedMode.Passage`** という対応を決める
 5. サーバ側がプレフィクスを正しく付けているかを 1 度実機確認（`mode` を変えると返るベクトルが変わる）
 

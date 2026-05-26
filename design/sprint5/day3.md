@@ -24,33 +24,33 @@
 ナレッジギャップ = 「分類できた（`matched_knowledge_id IS NOT NULL`）が、確信度が閾値未満（`confidence_score < ThresholdLow`）」の問い合わせ。
 未分類キューとの違い: 未分類は `matched_knowledge_id IS NULL`（そもそも当てられなかった）= `unclassified_queue` 側の話。こちらは「当てたが自信がない」。
 
+(G1)(G2) の 2 本を**自分で SQL に起こす**。構造と制約だけ示す（完成 SQL は置かない。閾値・並び・グルーピングを自分で確定するのが本タスク）:
+
 ```sql
 -- (G1) 低確信度の問い合わせリスト（admin が個別に見て改善判断する）
-SELECT i.id, i.raw_query, i.confidence_score, i.match_strategy,
-       k.name AS matched_name, c.name AS category_name, i.created_at
-  FROM inquiries i
-  LEFT JOIN knowledge_entries k ON k.id = i.matched_knowledge_id
-  LEFT JOIN categories       c ON c.id = i.category_id
- WHERE i.confidence_score IS NOT NULL
-   AND i.confidence_score < 0.5            -- = ThresholdLow（Day2-4 と共有）
- ORDER BY i.confidence_score ASC, i.created_at DESC
- LIMIT 100;
+--   FROM: inquiries を主に、matched_knowledge_id で knowledge_entries、
+--         category_id で categories を LEFT JOIN（当てられなかった行も拾えるよう LEFT）
+--   選ぶ列: id / raw_query / confidence_score / match_strategy / matched_name / category_name / created_at
+--   ここを自分で実装: WHERE 句
+--     - confidence_score が NULL でない（= スコア付き）かつ ThresholdLow 未満に絞る
+--   ここを自分で実装: 並びと件数
+--     - 自信が低い順（confidence_score 昇順）→ 新しい順（created_at 降順）、直近 100 件
 
 -- (G2) マスタ改善候補の集計: どの既存問題が「低確信でばかり当たっているか」
 --      = その問題の example_queries / keywords が実クエリと噛み合っていない兆候
-SELECT k.id, k.name, c.name AS category_name,
-       count(*)              AS low_conf_hits,
-       avg(i.confidence_score) AS avg_conf
-  FROM inquiries i
-  JOIN knowledge_entries k ON k.id = i.matched_knowledge_id
-  LEFT JOIN categories   c ON c.id = i.category_id
- WHERE i.confidence_score < 0.5
- GROUP BY k.id, k.name, c.name
- HAVING count(*) >= 3                       -- ノイズ除去: 3 回以上低確信で当たった問題のみ
- ORDER BY low_conf_hits DESC;
+--   FROM: inquiries を matched_knowledge_id で knowledge_entries に JOIN、categories は LEFT JOIN
+--   選ぶ列: knowledge の id / name、category 名、低確信ヒット数、平均 confidence
+--   ここを自分で実装: WHERE で低確信（< ThresholdLow）に絞る
+--   ここを自分で実装: group by（問題単位）+ HAVING でノイズ除去
+--     - 「たまたま 1 回低かった」を落とす閾値を自分で決める（指標判断のメモに残す）
+--   ここを自分で実装: 低確信ヒット数の多い順に並べる
 ```
 
-> 指標判断: (G2) の `HAVING count(*) >= 3` は「たまたま 1 回低かった」をノイズとして落とすため。これにより「example_queries を増やすべき問題」が浮き上がる。これが `unclassified_queue`（新規に作るべき問題）との運用上の使い分け = 「(G2) は既存問題の表現を磨く / 未分類キューは新問題を足す」。
+ヒント:
+- 閾値は Day2-4 の `ThresholdLow`（暫定 0.5）を流用する。**新しい閾値をここで作らない**
+- (G2) の `HAVING` の下限は「example_queries を増やすべき問題」だけを浮かせる目的。低すぎるとノイズ、高すぎると見落とす。自分で決めた根拠を書けるように
+
+> 指標判断: (G2) の `HAVING`（低確信ヒット数の下限）は「たまたま 1 回低かった」をノイズとして落とすため。これにより「example_queries を増やすべき問題」が浮き上がる。これが `unclassified_queue`（新規に作るべき問題）との運用上の使い分け = 「(G2) は既存問題の表現を磨く / 未分類キューは新問題を足す」。
 
 **完了確認**
 - [ ] (G1)(G2) を psql で実行して期待どおりに返る

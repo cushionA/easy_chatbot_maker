@@ -20,23 +20,26 @@
 - [ ] 閾値は MVP では環境変数で固定（テナント別 `app_settings` は Sprint 2 範囲外、[`sprint2_plan.md`](../sprint2_plan.md) の残タスク）
 
 **手順**
-1. 判定を `Portfolio.Search` に純粋関数で置く（DB / 設定非依存、しきい値は引数で受ける）:
+1. 判定を `Portfolio.Search` に純粋関数で置く（DB / 設定非依存、しきい値は**引数で受ける** — ハードコードしない）。骨格だけ示す。判定本体は自分で実装する:
    ```csharp
    namespace Portfolio.Search;
 
-   public enum ConfidenceBand { Confident, Middle, Low }
+   // ここを自分で定義: 3 段のバンド（confident / 中間 / low）を表す列挙
+   public enum ConfidenceBand { /* ... */ }
 
    public static class ThresholdJudge
    {
        // top1 の final_score でバンドを決める。confident→提示, low→LLM, middle→3件確認。
+       // なぜ 1 値でなく 2 閾値の 3 段か = 過検出と取りこぼしのバランス（面接で説明する）。
        public static ConfidenceBand Judge(
            IReadOnlyList<ClassifyCandidate> ranked, double confident, double low)
        {
-           if (ranked.Count == 0) return ConfidenceBand.Low;
-           var top = ranked[0].Score;
-           if (top >= confident) return ConfidenceBand.Confident;
-           if (top < low) return ConfidenceBand.Low;
-           return ConfidenceBand.Middle;
+           // ここを自分で実装:
+           //   - 候補が空なら Low（落とさない）
+           //   - top1 のスコアが confident 以上 → Confident
+           //   - low 未満 → Low
+           //   - その間 → Middle
+           throw new NotImplementedException();
        }
    }
    ```
@@ -130,7 +133,7 @@ backend/Portfolio.Web/Services/GeminiLlmFallback.cs を作って。Portfolio.Sea
 - [ ] 設計擬似コードの戻り値は `List<KnowledgeEntry>` だが、実装は Day1-3 で決めた `ClassifyResult` を返す（不一致は意図的。報告参照）
 
 **手順**
-1. `Portfolio.Web/Services/ClassifyService.cs` を作る（DB を引く各 search 実装に依存するため Web 側）:
+1. `Portfolio.Web/Services/ClassifyService.cs` を作る（DB を引く各 search 実装に依存するため Web 側）。コンストラクタの依存と制御フローの骨格だけ示す。各段のつなぎ込み（呼び出し順・短絡・分岐）は自分で実装する — ここが本サービスの設計の顔:
    ```csharp
    public sealed class ClassifyService(
        ExactMatchSearch exact,
@@ -142,31 +145,26 @@ backend/Portfolio.Web/Services/GeminiLlmFallback.cs を作って。Portfolio.Sea
        public async Task<ClassifyResult> ClassifyAsync(
            string query, Guid tenantId, Guid? categoryId, CancellationToken ct = default)
        {
-           // ④ keyword exact: Name 完全一致なら即確定
-           var ex = await exact.SearchAsync(query, tenantId, categoryId, limit: 5, ct);
-           if (ex.Any(c => c.Name == query))
-               return new ClassifyResult(ex.Take(3).ToList(), MatchStrategy.Keyword, IsConfident: true);
+           // [`05_search_classification.md:188-219`](../05_search_classification.md) の擬似コードを、この順で組み上げる。
+           // 各段は Day1〜Day2 で作った型/関数をそのまま呼ぶだけ。制御フローを自分で書く:
 
-           // ⑤ hybrid
-           var b = await bm25.SearchAsync(query, tenantId, categoryId, limit: 20, ct);
-           var e = await embedding.SearchAsync(query, tenantId, categoryId, limit: 20, ct);
-           var fused = ReciprocalRankFusion.Fuse([b, e], k: options.Value.RrfK);
-           var weighted = /* Day2-4: match_count を引いて Apply → top-3 */;
+           // ④ keyword exact: ExactMatchSearch を呼び、Name 完全一致が居たら
+           //    ここを自分で実装: top-3 を Strategy=Keyword / IsConfident=true で即 return（短絡）
 
-           var band = ThresholdJudge.Judge(weighted,
-               options.Value.ThresholdConfident, options.Value.ThresholdLow);
+           // ⑤ hybrid: bm25 と embedding をそれぞれ呼んで候補列を取り、
+           //    ここを自分で実装: ReciprocalRankFusion.Fuse([b, e], options.Value.RrfK) で結合
+           //    → Day2-4 の経路で match_count を引いて MatchCountWeighting.Apply → top-3 整形（weighted）
 
-           // ⑥ LLM fallback（low かつ BYOK 可のときだけ）
-           if (band == ConfidenceBand.Low && llm is not null)
-           {
-               var picked = await llm.ClassifyAsync(query,
-                   weighted.Select(c => (c.KnowledgeEntryId, c.Name)).ToList(), ct);
-               if (picked is not null)
-                   return new ClassifyResult([picked], MatchStrategy.Llm, IsConfident: false);
-           }
+           // 閾値判定:
+           //    ここを自分で実装: ThresholdJudge.Judge(weighted, ThresholdConfident, ThresholdLow) でバンド算出
 
-           return new ClassifyResult(weighted, MatchStrategy.Hybrid,
-               IsConfident: band == ConfidenceBand.Confident);
+           // ⑥ LLM fallback: band が Low かつ llm is not null のときだけ
+           //    ここを自分で実装: weighted の (id, name) を choices に渡して llm.ClassifyAsync、
+           //    非 null なら Strategy=Llm / IsConfident=false で return（choices 外は LLM 側で弾く前提）
+
+           // 既定の戻り: weighted を Strategy=Hybrid、IsConfident は band==Confident で返す
+           //    ここを自分で実装
+           throw new NotImplementedException();
        }
    }
    ```

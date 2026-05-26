@@ -21,23 +21,21 @@
 - [ ] [`05:164-176`](../05_search_classification.md)（暗黙シグナル表）を読んだ
 
 **手順**
-1. `Chat.razor` に `ChatStep.Confirm` を追加し、確認用の表示を自分で書く:
+1. `Chat.razor` に `ChatStep.Confirm` を追加し、確認用の表示を自分で書く。case の枠とハンドラ名だけ示すので、表示の組み立てと整形は自分で実装する:
    ```razor
    case ChatStep.Confirm:
        <h2>入力内容の確認</h2>
-       <dl>
-           @foreach (var (code, value) in _form.Entries())   // Day2 の集約モデル
-           {
-               <dt>@LabelFor(code)</dt>
-               <dd>@DisplayValue(value)</dd>   // is_multi は配列を改行 or カンマ整形
-           }
-       </dl>
-       <button @onclick="OnSubmit">起票する</button>          // Day4-10 へ
-       <button @onclick="BackToForm">修正</button>             // _step = Form。暗黙シグナル「修正」を記録
+       @* ここを自分で実装:
+          - Day2 の集約モデル（code→値）を <dl> で一覧表示する
+          - 各 code はラベル化（LabelFor 相当のヘルパを用意）、値は表示用に整形
+            （is_multi の配列は改行 or カンマ区切りに整える DisplayValue 相当）*@
+       <button @onclick="OnSubmit">起票する</button>          @* Day4-10 へ *@
+       <button @onclick="BackToForm">修正</button>             @* _step = Form。暗黙シグナル「修正」を記録 *@
        break;
    ```
-2. 「修正」を押したら `_step = ChatStep.Form` に戻す。Day3 末で `Inquiry` を保存する際、修正経由かどうかを記録できるようフラグを立てておく（新規列は足さない。[`05:176`](../05_search_classification.md)）。
-3. `OnSubmit` は **サーバ側 `FieldValidator` を再実行**してから Day4-10 の起票に渡す（クライアント検証を信頼しない）。
+   表示整形のヘルパ（ラベル引き・配列整形）は `@code` に自分で足す。
+2. 「修正」（`BackToForm`）を押したら `_step = ChatStep.Form` に戻す。Day3 末で `Inquiry` を保存する際、修正経由かどうかを記録できるようフラグを立てておく（新規列は足さない。[`05:176`](../05_search_classification.md)）。
+3. `OnSubmit` は **サーバ側 `FieldValidator` を再実行**してから Day4-10 の起票に渡す（クライアント検証を信頼しない）。検証 NG なら起票へ進ませない分岐も自分で書く。
 
 **完了確認**
 - [ ] フォーム → 確認で入力値が読みやすく出る（`is_multi` の配列も整形表示）
@@ -141,34 +139,32 @@ DraftFields は System.Text.Json でシリアライズ（Newtonsoft 禁止）。
 - [ ] [`05:30-35`](../05_search_classification.md)（⑦）と [`05:162`](../05_search_classification.md)（unclassified は「分類できなかった」軸）を読んだ
 
 **手順**
-1. `Chat.razor` に該当なし時のステップ（例: `ChatStep.Unclassified`）を追加し、自分で書く:
+1. `Chat.razor` に該当なし時のステップ（例: `ChatStep.Unclassified`）を追加し、自分で書く。case の枠だけ示す:
    ```razor
    case ChatStep.Unclassified:
        <h2>新規問題として登録</h2>
        <p>該当する問題が見つかりませんでした。内容を書いていただければ担当者が確認します。</p>
-       <InputTextArea @bind-Value="_freeform" />
-       <button @onclick="RegisterUnclassified">送信</button>
+       @* ここを自分で実装:
+          - <InputTextArea> を _freeform に双方向バインド
+          - 「送信」ボタンで RegisterUnclassified を呼ぶ *@
        break;
    ```
-2. 登録ロジックの骨子を自分で書く:
+2. 登録ロジックの骨子を自分で書く。**このキューに何を保存するか（`unclassified_queue` の契約）が運用フローの設計判断**なので、列の埋め方は自分で決める。シグネチャと書き込みの作法だけ示す:
    ```csharp
    private async Task RegisterUnclassified()
    {
-       var tenantId = (Guid)Http.HttpContext!.Items["TenantId"]!;  // クライアント由来は信頼しない
-       Db.UnclassifiedQueue.Add(new UnclassifiedQueueEntry
-       {
-           Id = Guid.NewGuid(),
-           TenantId = tenantId,
-           RawQuery = _query,            // ③ で入れた自然言語入力
-           FreeformBody = _freeform,     // 利用者の追記
-           Status = "pending",           // admin レビュー待ち（Day4-13）
-           CreatedAt = DateTimeOffset.UtcNow,
-           // QueryEmbedding は ClassifyService が出していれば流用、無ければ NULL のまま
-       });
-       await Db.SaveChangesAsync();
-       // 完了 UI へ。暗黙シグナル「どれでもない」= 候補ミスマッチを記録
+       // tenant_id は HttpContext.Items["TenantId"] から取る（クライアント由来は信頼しない。Sprint 1 day3 と同じ作法）
+       // ここを自分で実装:
+       //   UnclassifiedQueueEntry を 1 件作って Db.UnclassifiedQueue に Add → SaveChangesAsync。
+       //   何を入れるか（前提確認の列一覧から自分で選ぶ）:
+       //     - RawQuery   : ③ で入れた自然言語入力（_query）
+       //     - FreeformBody: 利用者の追記（_freeform）
+       //     - Status     : admin レビュー待ちを表す値（Day4-13 が拾う）
+       //     - QueryEmbedding: ClassifyService が出していれば流用、無ければ NULL
+       //   保存後は完了 UI へ。暗黙シグナル「どれでもない」= 候補ミスマッチを記録する
    }
    ```
+   ヒント: 列の正は前提確認の `UnclassifiedQueueEntry.cs` 一覧。`Status` の初期値は Day4-13 のレビューが `pending` を前提にしている点と整合させる。
 3. 「どれでもない」（候補からの離脱、[`05:170`](../05_search_classification.md)）からもこのステップに合流できる導線を Day4-9 の確認画面手前に置く。
 
 **完了確認**

@@ -60,7 +60,7 @@
 - [ ] Day1-1 完了
 
 **手順**
-1. `Portfolio.Destinations/ITicketDestination.cs` を作成。**設計書 06 章のシグネチャをそのまま写す**（戻り値は Day1-1 のライブラリに置く record 型）:
+1. `Portfolio.Destinations/ITicketDestination.cs` を作成。**設計書 06 章 [`06_destinations.md:8-45`](../06_destinations.md) のシグネチャを 1:1 で写す**。自分で確定させるのは「どんなメンバを持つ契約か」なので、骨格だけ示し、メンバは設計書を見て埋める:
    ```csharp
    using System.Text.Json;
 
@@ -68,57 +68,39 @@
 
    public interface ITicketDestination
    {
-       // "redmine" / "github_issues" — destinations.kind と一致させる
-       string Kind { get; }
-
-       Task<TestConnectionResult> TestConnectionAsync(
-           DestinationConfig config,
-           CancellationToken ct);
-
-       Task<TicketSubmitResult> SubmitAsync(
-           Ticket ticket,
-           DestinationConfig config,
-           CancellationToken ct);
+       // ここを自分で実装: 06 章のインターフェース定義を写す。
+       //   - kind を返す read-only プロパティ（"redmine" / "github_issues" と一致）
+       //   - 接続テスト用の非同期メソッド（DestinationConfig + CancellationToken → TestConnectionResult）
+       //   - 起票用の非同期メソッド（Ticket + DestinationConfig + CancellationToken → TicketSubmitResult）
+       // 戻り値型は手順 2 で定義する record 型。
    }
    ```
-2. `Portfolio.Destinations/Models/` に record を 4 つ置く（06 章の定義を写す。`TestConnectionResult` は 06 章のテキスト [`06_destinations.md:166-172`](../06_destinations.md) を型化する）:
+2. `Portfolio.Destinations/Models/` に値型を 4 つ + enum を置く。**06 章 [`06_destinations.md:8-45`](../06_destinations.md)（型定義）と [`06_destinations.md:166-172`](../06_destinations.md)（接続テスト結果のテキスト）を型化する**。各 record の「何を持つか」だけ示すので、メンバ（プロパティ名・型・順序）は設計書を見て自分で確定する:
    ```csharp
    // Models/DestinationConfig.cs
-   // PublicConfig: URL / project_id 等の非秘匿設定（destinations.config 由来）
-   // SecretValue : Vault から復号した API キー（appsettings には決して置かない）
-   // FieldMapping: 優先度変換等（destinations.field_mapping 由来）
-   public record DestinationConfig(
-       JsonElement PublicConfig,
-       string SecretValue,
-       JsonElement FieldMapping);
+   // 3 つのメンバを持つ record:
+   //   PublicConfig: URL / project_id 等の非秘匿設定（destinations.config 由来）→ JsonElement
+   //   SecretValue : Vault から復号した API キー → string
+   //   FieldMapping: 優先度変換等（destinations.field_mapping 由来）→ JsonElement
+   // ここを自分で実装: record 宣言。SecretValue のすぐ上に
+   //   「Vault 由来・appsettings 禁止・ToString() でログに出さない」コメントを付ける
+   //   （backend/CLAUDE.md の secret 非ログ規約）。
 
-   // Models/Ticket.cs — TicketPriority は low/normal/high/urgent
-   public record Ticket(
-       string Title,
-       string BodyMarkdown,
-       string TicketPriority,
-       Guid TenantId,
-       Guid KnowledgeEntryId);
+   // Models/Ticket.cs
+   // 起票 1 件を表す record。Title / BodyMarkdown / TicketPriority(string: low/normal/high/urgent) /
+   //   TenantId(Guid) / KnowledgeEntryId(Guid) を持つ。
+   // ここを自分で実装: record 宣言（06 章定義どおり。inquiry id は持たせない）。
 
    // Models/TicketSubmitResult.cs
-   public record TicketSubmitResult(
-       bool Success,
-       string? ExternalId,
-       string? ExternalUrl,
-       string? ErrorMessage);
+   // 起票結果の record: Success(bool) / ExternalId(string?) / ExternalUrl(string?) / ErrorMessage(string?)。
+   // ここを自分で実装: record 宣言。
 
    // Models/TestConnectionResult.cs
-   // 06 章「成功 / API キー無効 / URL 到達不可 / 権限不足」を表現する。
-   // Reason 列挙でハンドリングを分岐できるようにする（UI 表示と再試行判断に使う）。
-   public enum TestConnectionFailureReason
-   {
-       None, InvalidApiKey, Unreachable, Forbidden, Unknown
-   }
-
-   public record TestConnectionResult(
-       bool Success,
-       TestConnectionFailureReason FailureReason,
-       string? Message);
+   // 06 章「成功 / API キー無効 / URL 到達不可 / 権限不足」を型で表現する。
+   // 失敗理由を enum にして UI 表示・再試行判断で分岐できるようにする。
+   // ここを自分で実装:
+   //   - enum TestConnectionFailureReason（None / InvalidApiKey / Unreachable / Forbidden / Unknown）
+   //   - record TestConnectionResult（Success(bool) / FailureReason(enum) / Message(string?)）
    ```
 3. `record` は `09_task_split.md` / `backend/CLAUDE.md`（DTO は record）に従う。`SecretValue` は **`ToString()` でログに出さない**こと（`backend/CLAUDE.md` の secret 非ログ規約）をコメントに明記。
 
@@ -148,7 +130,7 @@
 - [ ] `infra/db/migrations/0001_schema.sql:123` の `kind IN ('redmine','github_issues')` 制約を確認（`Kind` 文字列はこれと一致させる）
 
 **手順**
-1. `Portfolio.Destinations/DestinationRegistry.cs`:
+1. `Portfolio.Destinations/DestinationRegistry.cs` — 解決インターフェースと実装の骨格。**ルックアップの中身（kind → 実装の辞書化と Resolve）は自分で書く**:
    ```csharp
    namespace Portfolio.Destinations;
 
@@ -158,16 +140,15 @@
        ITicketDestination Resolve(string kind);
    }
 
+   // DI が注入する全 ITicketDestination 実装を kind で引けるようにするのが役割。
    public sealed class DestinationRegistry(IEnumerable<ITicketDestination> destinations)
        : IDestinationRegistry
    {
-       private readonly IReadOnlyDictionary<string, ITicketDestination> _byKind =
-           destinations.ToDictionary(d => d.Kind, StringComparer.Ordinal);
-
-       public ITicketDestination Resolve(string kind) =>
-           _byKind.TryGetValue(kind, out var d)
-               ? d
-               : throw new NotSupportedException($"Unknown destination kind: {kind}");
+       // ここを自分で実装:
+       //   - 注入された destinations を d.Kind をキーに辞書化する（IReadOnlyDictionary に保持）。
+       //     kind は DB の CHECK 制約で小文字固定 → StringComparer.Ordinal で十分。
+       //   - Resolve(kind): 辞書に有れば返す。無ければ NotSupportedException を投げて明示失敗にする
+       //     （未登録 kind を握りつぶさない）。
    }
    ```
 2. DI 登録用の拡張メソッド `Portfolio.Destinations/ServiceCollectionExtensions.cs` を置く（実装の登録は Day 2 で各アダプタを足すが、枠だけ先に作る）:
@@ -180,8 +161,10 @@
    {
        public static IServiceCollection AddTicketDestinations(this IServiceCollection services)
        {
-           // 各アダプタは Day2 でここに AddSingleton<ITicketDestination, XxxDestination>() を足す
-           services.AddSingleton<IDestinationRegistry, DestinationRegistry>();
+           // ここを自分で実装:
+           //   - IDestinationRegistry → DestinationRegistry を Singleton 登録。
+           //   - 各アダプタは Day2 でここに AddSingleton<ITicketDestination, XxxDestination>() を足す（今は枠だけ）。
+           //   - 末尾で services を返す（拡張メソッドの作法）。
            return services;
        }
    }

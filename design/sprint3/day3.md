@@ -25,6 +25,7 @@ API キーを平文で `destinations.config` に置かず、Supabase Vault（pgs
 **手順**
 1. 新規 migration `infra/db/migrations/0004_vault_functions.sql` を作成（番号は既存の最新+1 に合わせる。`ls infra/db/migrations/` で確認）。
 2. **保存関数**（テナント所属チェック付きで Vault に secret を作り、`secret_vault_id` を返す）と **復号関数** を SECURITY DEFINER で定義する骨子:
+   構造骨子（関数シグネチャ・`SECURITY DEFINER`・`search_path` 固定・`GRANT` は残す。**本体ロジックは自分で書く** — ここが秘匿境界の肝）:
    ```sql
    -- 保存: 呼び出し側テナントの destination に紐づく secret を Vault に作成/更新し、id を返す。
    -- SECURITY DEFINER だが、引数のテナント整合は current_setting('app.tenant_id') で必ず検証する。
@@ -40,19 +41,12 @@ API キーを平文で `destinations.config` に置かず、Supabase Vault（pgs
        v_tenant uuid := current_setting('app.tenant_id', true)::uuid;
        v_secret_id uuid;
    BEGIN
-       -- 越境防止: この destination が呼び出しテナントのものか確認
-       IF NOT EXISTS (
-           SELECT 1 FROM public.destinations
-           WHERE id = p_destination_id AND tenant_id = v_tenant
-       ) THEN
-           RAISE EXCEPTION 'destination not found for current tenant';
-       END IF;
-
-       v_secret_id := vault.create_secret(p_secret);   -- pgsodium で暗号化保管
-       UPDATE public.destinations
-          SET secret_vault_id = v_secret_id
-        WHERE id = p_destination_id AND tenant_id = v_tenant;
-       RETURN v_secret_id;
+       -- ここを自分で実装: secret の保存と越境防止。
+       --   1. 越境防止チェック: p_destination_id が v_tenant のものか public.destinations で確認。
+       --      無ければ RAISE EXCEPTION（DEFINER は RLS をすり抜けうるので、この手書き突合が必須）。
+       --   2. vault.create_secret(p_secret) で pgsodium 暗号化保管し、返った id を v_secret_id へ。
+       --   3. public.destinations.secret_vault_id を v_secret_id で UPDATE（tenant_id 条件付き）。
+       --   4. v_secret_id を RETURN。
    END;
    $$;
 
@@ -69,17 +63,11 @@ API キーを平文で `destinations.config` に置かず、Supabase Vault（pgs
        v_vault_id uuid;
        v_secret text;
    BEGIN
-       SELECT secret_vault_id INTO v_vault_id
-         FROM public.destinations
-        WHERE id = p_destination_id AND tenant_id = v_tenant;  -- 越境不可
-       IF v_vault_id IS NULL THEN
-           RAISE EXCEPTION 'no secret for destination';
-       END IF;
-
-       SELECT decrypted_secret INTO v_secret
-         FROM vault.decrypted_secrets
-        WHERE id = v_vault_id;
-       RETURN v_secret;
+       -- ここを自分で実装: 越境チェック付きの復号。
+       --   1. public.destinations から secret_vault_id を取得（id = p_destination_id AND tenant_id = v_tenant）。
+       --      → 別テナントの id を渡されても tenant_id 条件で 0 行になり、復号できない（越境不可）。
+       --   2. NULL なら RAISE EXCEPTION（secret 未設定）。
+       --   3. vault.decrypted_secrets から該当 id の decrypted_secret を取得して RETURN。
    END;
    $$;
 

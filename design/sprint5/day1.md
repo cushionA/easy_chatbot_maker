@@ -23,29 +23,28 @@
 
 **手順**
 1. 新規ファイル `infra/db/migrations/0004_anon_widget_rls.sql` を作成
-2. `knowledge_entries` だけに匿名用ポリシーを追加する（既存の `tenant_isolation` ポリシーは**消さない**。OR で並ぶ）:
+2. `knowledge_entries` だけに匿名用ポリシーを追加する（既存の `tenant_isolation` ポリシーは**消さない**。OR で並ぶ）。以下の骨子を埋める形で自分で書く:
    ```sql
    -- 匿名ウィジェット: 読み取りのみ。app.widget_tenant_id 経由でのみ可視。
    -- 既存の tenant_isolation（app.tenant_id）と共存する。両者は別セッション変数なので混線しない。
-   DROP POLICY IF EXISTS public_widget_read ON knowledge_entries;
+
+   -- 再実行できるよう、まず同名ポリシーを DROP する（IF EXISTS）
+   -- DROP POLICY ... ON knowledge_entries;
+
    CREATE POLICY public_widget_read ON knowledge_entries
-     FOR SELECT
-     USING (tenant_id = current_setting('app.widget_tenant_id', true)::uuid);
+     -- ここを自分で実装: 操作は読み取りのみに絞る（匿名は knowledge_entries に書けない）
+     -- ここを自分で実装: USING 条件 = tenant_id が「匿名用セッション変数」と一致するか
+     --   - 参照する変数名は app.widget_tenant_id（app.tenant_id ではない）
+     --   - current_setting の第二引数を true にして「未設定なら NULL」にする
+     --     → 匿名変数を立てない接続は空集合になる（フェイルセーフ）。なぜ true が必須かをメモに残す
+     --   - uuid へキャストする
+     ;
    ```
-   - 第二引数 `true` で「未設定なら NULL」→ 匿名変数を立てない接続は空集合（フェイルセーフ）
-   - `FOR SELECT` のみ。匿名は `knowledge_entries` に書けない
-3. owner で流す:
-   ```bash
-   psql "$SUPABASE_DB_URL_OWNER" -f infra/db/migrations/0004_anon_widget_rls.sql
-   ```
-4. 手動検証（5-1-1 の範囲では `knowledge_entries` だけ）:
-   ```bash
-   # 匿名変数で A を立てると A のナレッジだけ見える
-   psql "$SUPABASE_DB_URL_APP" -c "BEGIN; SET LOCAL app.widget_tenant_id = '<tenant-a-uuid>'; SELECT count(*) FROM knowledge_entries; ROLLBACK;"
-   # 何も立てない → 0 行（フェイルセーフ）
-   psql "$SUPABASE_DB_URL_APP" -c "SELECT count(*) FROM knowledge_entries;"
-   # app.tenant_id 側を立てても匿名ポリシーとは独立に既存どおり動く（混線しない）
-   ```
+3. owner ロール（`$SUPABASE_DB_URL_OWNER`）で `psql -f` して流す
+4. 手動検証（5-1-1 の範囲では `knowledge_entries` だけ）。次の 3 点を確認する psql を自分で組み立てる:
+   - 匿名変数で A を立てる（`BEGIN; SET LOCAL app.widget_tenant_id = '<tenant-a-uuid>'; ...; ROLLBACK;`）→ A のナレッジだけ見える
+   - 何も立てずに `count(*)` → 0 行（フェイルセーフ）
+   - `app.tenant_id` 側を立てても匿名ポリシーとは独立に既存どおり動く（混線しない）
 
 **ポリシー骨子（この 3 テーブル分を自分が決める。書込テーブルは 5-1-2 で AI が複製）**
 
@@ -122,7 +121,7 @@ DROP POLICY IF EXISTS を各 CREATE の前に置く。
 - [ ] 既存の `DbConnectionInterceptor`（`app.tenant_id` を `HttpContext.Items["TenantId"]` から立てる）の動きを再確認
 
 **手順**
-1. 新規 `backend/Portfolio.Web/Middleware/WidgetAuthMiddleware.cs`:
+1. 新規 `backend/Portfolio.Web/Middleware/WidgetAuthMiddleware.cs`。シグネチャと分岐の骨格だけ示す。中の認可ロジックは自分で実装する:
    ```csharp
    // 匿名ウィジェット経路専用。/api/widget/... のみ対象。
    // ログイン経路の TenantResolutionMiddleware とは独立に動く。
@@ -130,52 +129,34 @@ DROP POLICY IF EXISTS を各 CREATE の前に置く。
    {
        public async Task InvokeAsync(HttpContext ctx, OwnerDbContext owner)
        {
-           if (!ctx.Request.Path.StartsWithSegments("/api/widget"))
-           {
-               await next(ctx);
-               return;
-           }
+           // ここを自分で実装: パスが /api/widget 配下でなければ素通り（await next; return）
+           //   ＝ 既存ログイン経路には一切触らない
 
-           // 公開鍵はヘッダで受け取る（クエリには載せない＝ログ流出防止）
-           var presented = ctx.Request.Headers["X-Widget-Key"].ToString();
-           if (string.IsNullOrEmpty(presented))
-           {
-               ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-               return;
-           }
+           // ここを自分で実装: 公開鍵をヘッダ X-Widget-Key から取得する
+           //   - クエリ文字列からは読まない（ログ流出防止）
+           //   - 空なら 401 を返して return
 
-           // 鍵はハッシュで保管。提示値をハッシュ化して照合（タイミング安全比較）。
-           var hash = WidgetKeyHasher.Hash(presented);
-           // owner 接続で引く理由: tenant_public_keys を引く時点ではまだ
-           // どのテナントか未確定なので、app 接続だと RLS で空集合になる。
-           var key = await owner.TenantPublicKeys
-               .AsNoTracking()
-               .FirstOrDefaultAsync(k => k.KeyHash == hash, ctx.RequestAborted);
-           if (key is null)
-           {
-               ctx.Response.StatusCode = StatusCodes.Status401Unauthorized;
-               return;
-           }
+           // ここを自分で実装: 提示値をハッシュ化し tenant_public_keys.key_hash と照合
+           //   - 鍵はハッシュで保管されている前提（平文比較しない）
+           //   - 引くのは owner 接続（OwnerDbContext）。理由: この時点では
+           //     まだどのテナントか未確定なので app 接続だと RLS で空集合になる
+           //   - AsNoTracking で読む / ctx.RequestAborted を渡す
+           //   - 見つからなければ 401 を返して return
 
-           // 確定したテナントを匿名コンテキストとして格納。
-           // app.tenant_id 用の Items["TenantId"] とは別キーにする（混線防止）。
-           ctx.Items["WidgetTenantId"]  = key.TenantId;
-           ctx.Items["WidgetKey"]       = key; // 5-1-4 の Origin / 5-2-3 の rate limit で使う
-           await next(ctx);
+           // ここを自分で実装: 確定したテナントを匿名コンテキストとして HttpContext.Items に格納
+           //   - キーは app.tenant_id 用の Items["TenantId"] とは別物にする（混線防止）
+           //   - Items["WidgetTenantId"] にテナント id、Items["WidgetKey"] に鍵オブジェクト
+           //     （後者は 5-1-4 の Origin / 5-2-3 の rate limit で使う）
+           //   - 最後に await next(ctx)
        }
    }
    ```
-2. `WidgetKeyHasher`（SHA-256 等。鍵は十分なエントロピーを持つランダム文字列なので salt 不要、固定ハッシュで OK。**平文鍵は DB に残さない**）を `backend/Portfolio.Web/Services/WidgetKeyHasher.cs` に追加
+2. `WidgetKeyHasher`（SHA-256 等。鍵は十分なエントロピーを持つランダム文字列なので salt 不要、固定ハッシュで OK。**平文鍵は DB に残さない**）を `backend/Portfolio.Web/Services/WidgetKeyHasher.cs` に追加。`Hash(string) -> string` の 1 メソッドだけ。中身は自分で実装
 3. `DbConnectionInterceptor`（Sprint 1 で作成済み）に分岐を足す。`Items["WidgetTenantId"]` があれば `app.tenant_id` ではなく `app.widget_tenant_id` を立てる:
-   ```csharp
-   // 既存: Items["TenantId"] → SET LOCAL app.tenant_id
-   // 追加: Items["WidgetTenantId"] → SET LOCAL app.widget_tenant_id
-   // 両方同時には立てない（ログイン経路と匿名経路は排他）
-   ```
-4. `Program.cs` に登録（`UseAuthentication`/`UseAuthorization` の後、ただし匿名なので `[Authorize]` は通さない。`MapRazorComponents` の前）:
-   ```csharp
-   app.UseMiddleware<WidgetAuthMiddleware>();
-   ```
+   - 既存: `Items["TenantId"]` → `SET LOCAL app.tenant_id`
+   - 追加: `Items["WidgetTenantId"]` → `SET LOCAL app.widget_tenant_id`
+   - 両方同時には立てない（ログイン経路と匿名経路は排他）。この排他をどう書くか自分で判断
+4. `Program.cs` に `app.UseMiddleware<WidgetAuthMiddleware>()` を登録する。位置は `UseAuthentication`/`UseAuthorization` の後、`MapRazorComponents` の前（匿名なので `[Authorize]` は通さない）
 
 **完了確認** — 単体テスト 4 ケース（テストは 5-1-5 の AI 依頼に同梱可）:
 - [ ] `X-Widget-Key` なし → 401
@@ -205,7 +186,7 @@ CORS / Origin 照合は「どのサイトからの埋め込みを許すか」の
 - [ ] `Program.cs` の minimal API でエンドポイントを足せる構成を確認
 
 **手順**
-1. 配信用に `Program.cs`（または `Endpoints/WidgetEndpoints.cs`）へ minimal API を足す:
+1. 配信用に `Program.cs`（または `Endpoints/WidgetEndpoints.cs`）へ minimal API を足す。骨格だけ示す。鍵照合と Origin 判定の中身は自分で書く:
    ```csharp
    // GET /api/widget/embed.js?key=<public-key>
    // Origin が allowed_origins に含まれるときだけ CORS ヘッダを返す。
@@ -213,27 +194,27 @@ CORS / Origin 照合は「どのサイトからの埋め込みを許すか」の
 
    widget.MapGet("/embed.js", async (HttpContext ctx, OwnerDbContext owner) =>
    {
-       var key = ctx.Request.Query["key"].ToString();
-       var hash = WidgetKeyHasher.Hash(key);
-       var pk = await owner.TenantPublicKeys.AsNoTracking()
-           .FirstOrDefaultAsync(k => k.KeyHash == hash);
-       if (pk is null) return Results.Unauthorized();
+       // ここを自分で実装: クエリ ?key= を読み、ハッシュ化して tenant_public_keys と照合
+       //   - owner 接続 / AsNoTracking（理由は 5-1-3 と同じ）
+       //   - 見つからなければ Results.Unauthorized()
 
-       var origin = ctx.Request.Headers.Origin.ToString();
-       if (!string.IsNullOrEmpty(origin) && IsOriginAllowed(origin, pk.AllowedOrigins))
-           ctx.Response.Headers.AccessControlAllowOrigin = origin; // エコーバック（* は使わない）
+       // ここを自分で実装: リクエストの Origin ヘッダを取り、IsOriginAllowed が真のときだけ
+       //   Access-Control-Allow-Origin に「その Origin をエコーバック」する
+       //   - ワイルドカード * は絶対に返さない（公開鍵漏洩時に任意サイトから叩かれる）
 
-       ctx.Response.ContentType = "application/javascript; charset=utf-8";
-       // embed.js 本体は 5-2-2 で AI が作る。ここでは雛形 or 静的ファイルを返す。
-       return Results.File("wwwroot/widget/embed.js", "application/javascript");
+       // ここを自分で実装: ContentType を application/javascript にして
+       //   embed.js 本体（wwwroot/widget/embed.js、本体は 5-2-2 で AI が作る）を返す
+       return ...;
    });
    ```
-2. `IsOriginAllowed(origin, allowedOrigins)` を自分で書く。**完全一致**（`https://example.com`）を基本にし、ワイルドカードは許さない方針:
+2. `IsOriginAllowed(string origin, string[] allowed)` を自分で書く。方針: **完全一致**（`https://example.com`）のみ許可、ワイルドカードは許さない。スキーム/ポート込みで一致を判定すること（大小無視で良いかも自分で判断）
    ```csharp
    static bool IsOriginAllowed(string origin, string[] allowed)
-       => allowed.Any(a => string.Equals(a, origin, StringComparison.OrdinalIgnoreCase));
+   {
+       // ここを自分で実装: allowed のいずれかと origin が完全一致するか
+   }
    ```
-3. プリフライト（`OPTIONS /api/widget/chat` 等）への応答を共通化する。許可 Origin のみ `Access-Control-Allow-Methods` / `Access-Control-Allow-Headers: X-Widget-Key, Content-Type` を返す。許可外は CORS ヘッダを付けない（ブラウザが弾く）
+3. プリフライト（`OPTIONS /api/widget/chat` 等）への応答を共通化する。許可 Origin のみ `Access-Control-Allow-Methods` / `Access-Control-Allow-Headers: X-Widget-Key, Content-Type` を返す。許可外は CORS ヘッダを付けない（ブラウザが弾く）。実装は自分で組み立てる
 
 **完了確認**
 - [ ] 許可 Origin から `GET /api/widget/embed.js?key=有効` → 200 + `Access-Control-Allow-Origin: <その Origin>`

@@ -30,15 +30,17 @@
    | なし | あり | ガイダンス付き起票。ガイダンス表示 →「それでも解決しない →フォーム」 |
    | なし | なし | 直接起票。即フォーム |
 
-2. `Chat.razor` に分岐の骨子を**自分で**書く:
+2. `Chat.razor` に分岐の骨子を**自分で**書く。enum と判定メソッドのシグネチャだけ示す。**どの真偽の組み合わせがどの enum 値になるか（= 上の表）は自分で `Decide` の中に落とす**:
    ```csharp
    private enum Escalation { AutoResolved, Guided, DirectForm }
 
-   private static Escalation Decide(KnowledgeEntry k) =>
-       !string.IsNullOrWhiteSpace(k.AutoResolution) ? Escalation.AutoResolved
-       : !string.IsNullOrWhiteSpace(k.GuidanceMessage) ? Escalation.Guided
-       : Escalation.DirectForm;
-   // 注: AutoResolution が優先。両方あっても自動回答完結を先に出す（表の1行目が最優先）
+   // 表（手順 1）の 3 行を 1 つの戻り値にマッピングする。
+   // ヒント: 空文字と NULL の両方を「なし」とみなす（IsNullOrWhiteSpace）。
+   //   優先順位に注意 — 表の上の行ほど優先（両方あっても自動回答完結を先に出す）。
+   private static Escalation Decide(KnowledgeEntry k)
+   {
+       // ここを自分で実装: AutoResolution / GuidanceMessage の有無で 3 分岐
+   }
    ```
 3. 確定時に `Decide(k)` を呼び、`ChatStep` を拡張（`AutoAnswer` / `Guidance` / `Form`）して切替:
    - `AutoResolved` → 解決方法 + 「解決した？ はい/いいえ」。「はい」で `Inquiry.Resolved=true` 保存して終了（保存自体は Day3 で `Inquiry` 一括保存に寄せてもよい）。「いいえ」はフォームへ落とす。
