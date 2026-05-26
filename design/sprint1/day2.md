@@ -64,7 +64,7 @@ Supabase が発行した JWT を `Authorization: Bearer ...` ヘッダから受�
 認証パイプラインの中核。後から「なんとなく動いている」になりやすい部分で、ここで詰まると Day2-3 以降が全部空回りする。
 
 **前提確認**
-- [ ] `backend/Portfolio.Web/Portfolio.Web.csproj` に `Microsoft.AspNetCore.Authentication.JwtBearer` が入っている（参照済み）
+- [x] `backend/Portfolio.Web/Portfolio.Web.csproj` に `Microsoft.AspNetCore.Authentication.JwtBearer` が入っている（参照済み）
 - [ ] `design/04_security_multitenant.md:82-105` を読んだ
 
 **手順**
@@ -138,7 +138,7 @@ URL `/t/{slug}/...` の `slug` を読み取り、JWT の `sub`（user_id）と `
 認可ロジックの中核。誤ると別テナントに侵入される。
 
 **前提確認**
-- [ ] Day2-2 完了
+- [x] Day2-2 完了
 - [ ] `design/04_security_multitenant.md:82-105` を再読
 
 **手順**
@@ -341,3 +341,5 @@ ASP.NET Core 8 + xUnit + Testcontainers.PostgreSql で RLS 漏洩テストを書
 
 - Day3 では `/t/{slug}/categories` 系の Razor ページを書く。ミドルウェアは既に `slug → tenant_id` を解決済みなので、ページ側は `HttpContext.Items["TenantId"]` を読むか、単に `DbContext` を使えば自動で絞られる
 - Excel 取込スクリプトはミドルウェアを通らないので、`OwnerDbContext` でテナント作成 → 個別接続で `SET LOCAL` してデータ投入、の 2 段で組む
+
+> **対応済み（Day2-2 で発覚 / DB 接続の前提）**: `.env.local` の `SUPABASE_DB_URL_APP` は URL 形式（`postgresql://user:pass@host/db`）だが `NpgsqlDataSourceBuilder` はキーワード形式しか受け付けず `Program.cs` の接続ソース生成で落ちていた。方針 B で対応 — `Program.cs` に `ToNpgsqlConnectionString()` ヘルパーを追加し、`postgresql://`/`postgres://` で始まる場合のみ `Uri` パースで `NpgsqlConnectionStringBuilder`（`SslMode.Require`）に詰め替える。`ConnectionStrings:Postgres` と `SUPABASE_DB_URL_APP` の両経路を 1 回の変換で正規化。生 `.env.local`（URL 形式）でローカル起動成功を確認済み。`.env.local` は Supabase コピペそのまま（URL 形式）で OK。
