@@ -343,3 +343,7 @@ ASP.NET Core 8 + xUnit + Testcontainers.PostgreSql で RLS 漏洩テストを書
 - Excel 取込スクリプトはミドルウェアを通らないので、`OwnerDbContext` でテナント作成 → 個別接続で `SET LOCAL` してデータ投入、の 2 段で組む
 
 > **対応済み（Day2-2 で発覚 / DB 接続の前提）**: `.env.local` の `SUPABASE_DB_URL_APP` は URL 形式（`postgresql://user:pass@host/db`）だが `NpgsqlDataSourceBuilder` はキーワード形式しか受け付けず `Program.cs` の接続ソース生成で落ちていた。方針 B で対応 — `Program.cs` に `ToNpgsqlConnectionString()` ヘルパーを追加し、`postgresql://`/`postgres://` で始まる場合のみ `Uri` パースで `NpgsqlConnectionStringBuilder`（`SslMode.Require`）に詰め替える。`ConnectionStrings:Postgres` と `SUPABASE_DB_URL_APP` の両経路を 1 回の変換で正規化。生 `.env.local`（URL 形式）でローカル起動成功を確認済み。`.env.local` は Supabase コピペそのまま（URL 形式）で OK。
+>
+> TODO（PR #30 レビュー指摘 / 今すぐではないフォロー）:
+> - `ToNpgsqlConnectionString` は `SslMode.Require` 固定。ローカル docker postgres（SSL 非対応）に切替えると接続失敗するので、その時はクエリ `?sslmode=...` 尊重 or ポート省略時 `5432` フォールバックを入れる
+> - 同関数は純粋関数なので `Portfolio.Web.Tests` にユニットテスト3本（URL→keyword / keyword素通り / ポート省略）を足すと回帰防止になる
