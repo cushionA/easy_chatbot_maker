@@ -131,14 +131,16 @@ SaaS のテナント分離まわりを作った週を例にすると、流れは
 # 環境構築の方法
 
 特別なものは要りません。Claude Code とテキストファイルだけです。
+実際に使っているファイルは下にリンクを貼ったので、そのまま中身を見られます。
 
 1. **Claude Code を入れる**（VSCode 拡張でも CLI でも可。書きながら聞くので拡張が楽）
-2. プロジェクト直下に **`CLAUDE.md`** を置く（技術スタック・禁止事項などの規約。AI が毎回読む土台になる）
-3. **`.claude/skills/sprint-plan/SKILL.md`** と **`.claude/skills/pair-start/SKILL.md`** を置く（2 つのスキルの中身。やり方①〜④をそのまま手順として書いてあるだけ）
-4. **`design/`** に設計メモと、生成された作業指示書（`sprintN/dayX.md`）を貯めていく
+2. プロジェクト直下に **[`CLAUDE.md`](https://github.com/cushionA/easy_chatbot_maker/blob/main/CLAUDE.md)** を置く（技術スタック・禁止事項などの規約。AI が毎回読む土台になる）
+3. **[`.claude/skills/sprint-plan/SKILL.md`](https://github.com/cushionA/easy_chatbot_maker/blob/main/.claude/skills/sprint-plan/SKILL.md)** と **[`.claude/skills/pair-start/SKILL.md`](https://github.com/cushionA/easy_chatbot_maker/blob/main/.claude/skills/pair-start/SKILL.md)** を置く（2 つのスキルの中身。やり方①〜④をそのまま手順として書いてあるだけ）
+4. **[`design/`](https://github.com/cushionA/easy_chatbot_maker/tree/main/design)** に設計メモと、生成された作業指示書（`sprintN/dayX.md`）を貯めていく
 
 あとは「Sprint N の作業指示書を作って」「今日の作業始めよう」と話しかけるだけで回り始めます。
 スキルの中身は普通の Markdown なので、使いながら「ここはもっとこう動いてほしい」と思ったら直せます。
+この記事で出てくる工夫（後述の丸写しチェックなど）も、[`pair-start/SKILL.md`](https://github.com/cushionA/easy_chatbot_maker/blob/main/.claude/skills/pair-start/SKILL.md) を直接いじって入れています。
 
 # 工夫点：指示書が「丸写し」になっていないか着手前に確認する
 
