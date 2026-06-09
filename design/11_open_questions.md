@@ -29,21 +29,21 @@
 
 ## インフラ選定の確認
 
-### Q. Oracle Cloud Always Free アカウントが取れるか
+### Q. ホスティング構成の確定
 
-**解決済み（2026-05-16）**：Plan A は採用しない方針に決定し、Plan B（Azure F1 + Supabase + HF Spaces）に確定。Plan A は Phase 2 で語る課題に格下げ。詳細は [02_architecture.md](02_architecture.md)。
+マネージドサービス前提（AWS/GCP の Cloud Run/ECS + Cloud SQL/RDS + マネージド/自前 OpenSearch + BigQuery、Docker/Kubernetes 可搬）に確定。詳細は [02_architecture.md](02_architecture.md)。
 
-### Q. Plan B の Supabase 自動停止対策
+### Q. 無料枠/最小インスタンスのコールドスタート対策
 
-- 7 日無操作で停止 → 復活は手動 or API ping
-- GitHub Actions cron で週 1 ping、これで停止回避できるか実機検証必要
+- Cloud Run/ECS のコールドスタートや最小インスタンスのスケール挙動を実機検証
+- cron ウォームアップはオプションで検討
 
 **実装後に検証**。
 
-### Q. Render Free / HF Spaces の Embedding モデル安定性
+### Q. Embedding 推論サービスの安定性
 
-- `multilingual-e5-base` は約500MB、Render Free の 512MB RAM で OOM 多発の報告あり
-- HF Spaces CPU が代替候補だが、レスポンスタイムが許容範囲か未検証
+- `multilingual-e5-base` 約500MB を Cloud Run / ECS（CPU）の RAM/コールドスタートで検証
+- レスポンスタイムが許容範囲か未検証
 
 **実装後に検証**。
 
@@ -89,11 +89,11 @@
 
 ### Q. マスタアップロードのフォーマット
 
-- 既存 Streamlit 版は Excel（`data.xlsx`）
-- 本格 Web 版でも Excel 継続？YAML / JSON も？
+- パーサは exceljs / JSON 前提（Excel/JSON 対応）
+- Phase 2 で YAML 等も追加予定
 - スキーマバリデーション（必須カラム・型）の厳密さ
 
-**初期実装**：Excel のみ対応、Phase 2 で YAML / JSON も追加。
+**初期実装**：Excel/JSON 対応、Phase 2 で YAML 等も追加。
 
 ### Q. マスタ更新時の差分処理
 
@@ -133,7 +133,7 @@
 ### Q. ナレッジマスタが大きい時の挙動
 
 - 1000問題超えた時の検索性能
-- pgvector HNSW のパラメータ調整
+- **Elasticsearch の kNN（HNSW）/ シャードのパラメータ調整**
 - カテゴリ絞込が効かないクエリの挙動
 
 **実機検証**。Free tier で1000問題テナントが現実的かは未検証。
@@ -169,8 +169,8 @@
 
 候補：
 
-1. インフラセットアップ（Azure F1 + Supabase プロジェクト作成）
-2. プロジェクト雛形（Blazor Server + FastAPI Embedding）
+1. インフラセットアップ（Cloud SQL/RDS + OIDC + Secret Manager + マネージド/自前 OpenSearch）
+2. プロジェクト雛形（**Node API + React フロント + FastAPI Embedding**）
 3. DB マイグレーション
 4. 認証・テナント管理（最小限）
 5. マスタアップロード + 検索（コア機能）

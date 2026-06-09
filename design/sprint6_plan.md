@@ -14,7 +14,7 @@
 
 ## 前提（Sprint 1〜4 の成果物に依存する。作り直さず利用する）
 
-- **Sprint 1**: 認証 + RLS + `DbConnectionInterceptor` + Category CRUD 3 ページ（`Components/Pages/Categories/`）。`EditForm` の手本はここ。
+- **Sprint 1**: 認証 + RLS + `tenantMiddleware` + Category CRUD 3 ページ（`apps/web/src/pages/categories/`）。React フォームの手本はここ。
 - **Sprint 2**: `ClassifyService` が ④〜⑥ をつなぐ。本 Sprint は取込したマスタが検索に乗ることを確認するために参照するのみ（内部は触らない）。
 - **Sprint 4**: 動的フォーム（`required_field_codes` 結合 → `DynamicForm`）。本 Sprint で編集する `field_definitions` / `required_field_codes` がこのフォーム描画の入力になる。
 
@@ -34,25 +34,27 @@
 
 「自分で書く（説明責任が重い箇所）」と「AI に委譲（仕様だけ握る）」の区分は [`09_task_split.md`](09_task_split.md) を継承する。各タスクに **[自分]** / **[AI]** を明記する。
 
+さらに各タスクに **層ラベル**（`[FE]` フロントエンド / `[BE]` バックエンド / `[INFRA]` インフラ / `[TEST]` テスト / `[ML]` 機械学習 / `[設計]` 上流設計）を付け、フルスタックの守備範囲を可視化する。複数層にまたがるタスクは主たる層を先頭に併記する。
+
 ---
 
 ## Day 1 — KnowledgeEntry リッチ編集（編集 UX の型）
 
 > Sprint 2 day1 で雛形 CRUD は AI が複製済み。今日は KnowledgeEntry の**リッチ編集 UX を自分の手で仕上げる**日。配列列・3 段階エスカレーション列・優先度・`required_field_codes`・embedding 再計算トリガを 1 ページに同居させる「編集 UX の型」を作り、一覧/作成/削除はその型から AI に複製させる。
 
-- **Day1-1.** KnowledgeEntry リッチ編集ページ（編集 UX の型）[自分（最初の1個）]
-- **Day1-2.** KnowledgeEntry 一覧ページ（マスタ管理入口）[AI]
-- **Day1-3.** KnowledgeEntry 作成ページ（編集ページの複製）[AI]
-- **Day1-4.** KnowledgeEntry 削除（確認付き）[AI]
+- **Day1-1.** KnowledgeEntry リッチ編集ページ（編集 UX の型）[自分（最初の1個）] [FE] [BE]
+- **Day1-2.** KnowledgeEntry 一覧ページ（マスタ管理入口）[AI] [FE] [BE]
+- **Day1-3.** KnowledgeEntry 作成ページ（編集ページの複製）[AI] [FE] [BE]
+- **Day1-4.** KnowledgeEntry 削除（確認付き）[AI] [FE] [BE]
 
 ## Day 2 — 残マスタ + 一括取込
 
 > 残るマスタ（FieldDefinition / ValidationRule）の CRUD を Day 1 と Sprint 1 の型から AI に複製させ、Excel/JSON 一括取込を入れる日。取込の**スキーマと突合キーの定義**は検索品質と冪等性に直結するので自分が握り、UI と I/O は AI。
 
-- **Day2-1.** FieldDefinition CRUD（`field_type` / `is_multi` / `choices` / `validation_rule_id`）[AI]
-- **Day2-2.** ValidationRule CRUD [AI]
-- **Day2-3.** 取込スキーマ + 突合キー（upsert キー）の定義 [自分（設計判断が中核）]
-- **Day2-4.** Excel/JSON 一括取込 UI（取込時 embedding を `passage:` で計算）[AI]
+- **Day2-1.** FieldDefinition CRUD（`field_type` / `is_multi` / `choices` / `validation_rule_id`）[AI] [FE] [BE]
+- **Day2-2.** ValidationRule CRUD [AI] [FE] [BE]
+- **Day2-3.** 取込スキーマ + 突合キー（upsert キー）の定義 [自分（設計判断が中核）] [設計]
+- **Day2-4.** Excel/JSON 一括取込 UI（取込時 embedding を `passage:` で計算）[AI] [BE] [ML]
 
 ---
 
@@ -72,17 +74,17 @@
 
 | 症状 | 見るべき場所 |
 |---|---|
-| 配列列が `EditForm` でバインドできない | [`sprint2/day1.md:32`](sprint2/day1.md)（`string[]` は中間 `string` カンマ区切りを介す） |
+| 配列列が React の `useFieldArray` でバインドできない | [`sprint2/day1.md:32`](sprint2/day1.md)（`string[]` は `useFieldArray` + `react-hook-form` で配列管理） |
 | 取込した knowledge が検索で 0 件 | embedding が `query:` で計算されている。取込は **`passage:`**（[CLAUDE.md 横断ルール], [`embedding/CLAUDE.md`](../embedding/CLAUDE.md)） |
 | 取込で同じ行が重複登録される | 突合キー（Day2-3）が効いていない。`(tenant_id, category_code, name)` で upsert |
-| 別テナントのマスタが見える | `SET LOCAL` が効いていない（Sprint 1 Day2-4 の interceptor を疑う） |
+| 別テナントのマスタが見える | `SET LOCAL` が効いていない（Sprint 1 Day2-4 の tenant middleware を疑う） |
 
 ## Sprint 6 完了後に残るタスク
 
 Day 2 まで終わると、MVP のマスタ管理（[`08_features.md`](08_features.md) の「マスタ管理」ブロック）が締まる。MVP として未着手で残るのは:
 
 - **組織オンボーディング & メンバー管理**（サインアップ/サインイン結線、組織作成・編集、メンバー招待・ロール admin/member、ボット URL 払い出し）。[`08_features.md`](08_features.md) の「認証・組織管理」ブロック。product 判断（招待方式等）が混じるため未分解。
-- **BYOK（Gemini API キー）の Vault 保管 + ⑥ LLM フォールバックの UI 結線**（⑤→⑥→⑦）。Sprint 2 が ⑥ ロジック、Sprint 3 が Vault 基盤を持つので、両者を結線する小 Sprint。本 MVP では ⑤→⑦ 直結のまま。
+- **BYOK（Gemini API キー）の Secret Manager 保管 + ⑥ LLM フォールバックの UI 結線**（⑤→⑥→⑦）。Sprint 2 が ⑥ ロジック、Sprint 3 が Secret Manager 基盤を持つので、両者を結線する小 Sprint。本 MVP では ⑤→⑦ 直結のまま。
 
 以降は Phase 2 以降（[`08_features.md`](08_features.md)）:
 

@@ -9,8 +9,10 @@
   - Embedding モデル本体（Transformers.js, Phase 2）
   - クエリ単位のベクトル化計算（Phase 2）
 
-[サーバ DB（Supabase / 自前 Postgres）]
-  - メタデータ + Embedding ベクトル
+[サーバ（Node API + PostgreSQL + Elasticsearch + BigQuery）]
+  - PostgreSQL：構造化メタデータ（RLS）
+  - Elasticsearch：検索インデックス（全文 + ベクトル）
+  - BigQuery：利用ログ・分析
   - 容量最小（〜数MB / テナント）
 
 [外部システム（Redmine / GitHub Issues）]
@@ -28,7 +30,6 @@
 | `external_ticket_id` | "12345" 等 |
 | `external_ticket_url` | "https://redmine.example.com/issues/12345" |
 | `raw_query` | 自然言語入力（短い） |
-| `query_embedding` | ベクトル（分析用、HNSWインデックス無し） |
 | `matched_knowledge_id` | 分類結果 |
 | `match_strategy` | dropdown / keyword / hybrid / llm |
 | `confidence_score` | ナレッジギャップ検出用 |
@@ -54,7 +55,7 @@
 
 - サーバ Embedding 推論サービス（FastAPI）が**Phase 2 で不要**になる
 - 「**クエリ内容がベクトル化されてからサーバに到達するため、原文を中継しないモード**」をプライバシー強化版として語れる
-- Render Free の 512MB RAM 制約から解放される
+- Cloud Run/ECS などのコンテナ RAM 制約から解放される
 
 ### MVP では？
 
@@ -72,21 +73,22 @@ Phase 2 で「サーバ→クライアント」の移行を行う。インター
 
 - 管理者が Excel / JSON をアップロード
 - サーバでパース → DB 保存 → 元ファイルは即削除
-- DB にはテキスト + Embedding のみ残る
+- DB にはテキストのみ残る（Embedding ベクトルは Elasticsearch へ）
 
 ### Git 連携は Phase 2 で
 
 技術リテラシーの高い組織向けに Git からの同期も将来サポート可能：
 
-```csharp
-public interface IKnowledgeSource
-{
-    Task<List<KnowledgeEntry>> FetchAsync(SourceConfig config);
+```typescript
+interface IKnowledgeSource {
+    fetch(config: SourceConfig): Promise<KnowledgeEntry[]>;
 }
 
-public class WebUploadSource : IKnowledgeSource { ... }     // MVP
-public class GitRepositorySource : IKnowledgeSource { ... } // Phase 2
+class WebUploadSource implements IKnowledgeSource { ... }     // MVP
+class GitRepositorySource implements IKnowledgeSource { ... } // Phase 2
 ```
+
+パースには Excel に **exceljs（または SheetJS/xlsx）**、JSON は**標準 JSON**（`JSON.parse`）を使用。
 
 **MVP では実装しないが、インターフェースで拡張可能性を示す**。
 
@@ -103,24 +105,23 @@ public class GitRepositorySource : IKnowledgeSource { ... } // Phase 2
 
 ### 1テナントあたり
 
-| 種類 | 1件 | 件数 | 小計 |
-|---|---|---|---|
-| `knowledge_entries`（テキスト） | 〜1KB | 100問題 | 100KB |
-| `knowledge_entries.embedding`（vec(768)） | 1.5KB | 100問題 | 150KB |
-| `inquiries`（メタ、本文無し） | 〜1KB | 1万件 | 10MB |
-| `inquiries.query_embedding` | 1.5KB | 1万件 | 15MB |
-| `unclassified_queue` | 〜2KB | 1000件 | 2MB |
-| **合計** | | | **〜27MB** |
+| 種類 | 1件 | 件数 | 小計 | 配置 |
+|---|---|---|---|---|
+| `knowledge_entries`（テキスト） | 〜1KB | 100問題 | 100KB | PostgreSQL |
+| `knowledge_entries.embedding`（vec(768)） | 1.5KB | 100問題 | 150KB | Elasticsearch |
+| `inquiries`（メタ、本文無し） | 〜1KB | 1万件 | 10MB | PostgreSQL |
+| `unclassified_queue` | 〜2KB | 1000件 | 2MB | PostgreSQL |
+| **合計（PostgreSQL メタのみ）** | | | **〜12MB** | |
 
-### Supabase Free（500MB）でのキャパ
+### マネージド DB/検索インスタンスでのキャパ
 
-500MB ÷ 27MB ≒ **15〜20 テナント**収容可能。
+Cloud SQL/RDS 小インスタンス（例: 10GB）では数百テナント相当を収容可能。
 
 ポートフォリオ規模（1〜3テナント）では全く問題なし。
 
 スケール時の有料化ポイント：
-- 20テナント超え → Supabase Pro（$25/月、8GB DB）
-- それでも100テナント超え → 自前 Postgres（Oracle Cloud VM内）
+- テナント数増加 → マネージド DB / マネージド検索の上位プランへ昇格
+- さらなるスケール → 自前 Elasticsearch クラスタ / PostgreSQL レプリカ構成
 
 ## マスタアップロード後の処理フロー
 
@@ -128,21 +129,22 @@ public class GitRepositorySource : IKnowledgeSource { ... } // Phase 2
 [管理者ブラウザ]
   Excel/JSON アップロード（multipart/form-data）
    ↓
-[Blazor Server]
+[Node API]
   - ファイル受信、一時ストレージに保存
-  - パース（Excel: ClosedXML 等 / JSON: System.Text.Json）
+  - パース（Excel: exceljs / JSON: JSON.parse）
   - スキーマ検証（必須カラム等）
    ↓
 [Embedding 推論サービス (FastAPI)]
   - 各 knowledge_entry の (name + keywords + example_queries) を embedding 化
-  - C# にベクトル返却
+  - passage: プレフィクスを付与してベクトル返却
    ↓
-[Postgres]
-  - tenant_id 付与で INSERT
-  - tsvector 自動生成（GENERATED ALWAYS AS）
-  - HNSW インデックス更新
+[PostgreSQL: メタ INSERT]
+  - tenant_id 付与で構造化メタデータを INSERT
    ↓
-[Blazor Server]
+[Elasticsearch: passage ベクトル & 全文をインデックス]
+  - ベクトル（kNN 検索用）+ 全文テキストをインデックス登録
+   ↓
+[Node API]
   - 一時ファイル削除
   - 完了通知
 ```
@@ -153,7 +155,10 @@ public class GitRepositorySource : IKnowledgeSource { ... } // Phase 2
 |---|---|
 | ナレッジマスタ | テナントの手元（アップロード元ファイル）が原本 |
 | 起票本文 | 外部システム側が原本（戦略1） |
-| メタデータ・Embedding | 失っても再生成可能（マスタ再アップロード→再embedding） |
+| メタデータ | 失っても再生成可能（マスタ再アップロード→再インデックス） |
+| Elasticsearch インデックス | 失っても再生成可能（マスタ再アップロード→再 embedding→再インデックス） |
+| API キー等秘匿 | Secret Manager | 暗号化必須 |
+| Embedding モデル | サーバ（MVP）→ クライアント（Phase 2） | コスト最適化 |
 
 **全データ消失しても、テナントが元の Excel/JSON を再アップロードすれば復元可能**な設計。
 
@@ -165,9 +170,10 @@ public class GitRepositorySource : IKnowledgeSource { ... } // Phase 2
 
 | データ | 場所 | 理由 |
 |---|---|---|
-| マスタ（ナレッジ） | 当システム DB | 検索インデックスのため |
-| Embedding ベクトル | 当システム DB | 検索のため |
+| マスタ（ナレッジ）テキスト・メタ | PostgreSQL | 構造化メタ管理・RLS |
+| Embedding ベクトル | Elasticsearch インデックス | 検索（kNN + 全文）のため |
 | 起票本文 | 外部システム（Redmine/GitHub） | 真の保管先 |
+| 利用ログ・分析 | BigQuery | 集計・分析のため |
 | Embedding モデル | サーバ（MVP）→ クライアント（Phase 2） | コスト最適化 |
-| API キー等秘匿 | Supabase Vault | 暗号化必須 |
+| API キー等秘匿 | Secret Manager | 暗号化必須 |
 | マスタ元ファイル | アップロード後即削除 | 必要なし |

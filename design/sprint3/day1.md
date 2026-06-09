@@ -1,56 +1,53 @@
 # Sprint 3 Day 1 作業指示書（2026-05-27）
 
 > テーマ: **抽象を確定する**
-> 完了時の状態: `Portfolio.Destinations` クラスライブラリが `Portfolio.sln` に追加され、`ITicketDestination` と 4 つの record 型、`DestinationRegistry` がビルドできる。起票本文 Markdown 化（`build_description` 移植）が単体テスト付きで動く。実アダプタ実装は Day 2。
+> 完了時の状態: `apps/api/src/destinations/` モジュールが追加され、`ITicketDestination` と 4 つの型、`DestinationRegistry` がビルドできる。起票本文 Markdown 化（`build_description` 移植）が単体テスト付きで動く。実アダプタ実装は Day 2。
 > 推定所要: 4〜6 時間
 
 > 参照の正: [`06_destinations.md:8-45`](../06_destinations.md)（インターフェース定義）、[`09_task_split.md:79-84`](../09_task_split.md)（委譲判断）。
-> 命名注意: 設計書 06 章は `src/Chatbot.Destinations/` 表記だが、本リポジトリは `Portfolio.*` 命名。**新規クラスライブラリは `backend/Portfolio.Destinations/`、名前空間は `Portfolio.Destinations`** に統一する（設計書は書き換えない）。
+> 命名注意: 設計書 06 章は `src/Chatbot.Destinations/` 表記だが、本リポジトリは `apps/api/src/destinations/` 配置。**新規モジュールは `apps/api/src/destinations/`、export は `index.ts` から** に統一する（設計書は書き換えない）。
 
 ---
 
-## Day1-1. ソリューションに `Portfolio.Destinations` クラスライブラリを追加 [自分]
+## Day1-1. `apps/api/src/destinations/` モジュールを作成 [自分] [BE]
 
 **目的**
-起票ロジックを `Portfolio.Web` から切り出した独立ライブラリに置く。Web に依存しない純粋なドメイン層にすることで、面接で「Adapter パターンを Web から分離して、テスト容易性と差し替え可能性を確保した」と語れる。
+起票ロジックを `apps/api/src/` から切り出した独立モジュールに置く。ルーターや HTTP 層に依存しない純粋なドメイン層にすることで、面接で「Adapter パターンを HTTP 層から分離して、テスト容易性と差し替え可能性を確保した」と語れる。
 
 **自分で書く理由**
-プロジェクト構成（依存方向: `Portfolio.Web` → `Portfolio.Destinations`、逆は禁止）は設計判断。ここで Web 参照を入れてしまうと抽象の意味がなくなる。
+モジュール構成（依存方向: ルーター/コントローラ → destinations モジュール、逆は禁止）は設計判断。ここで HTTP 依存を入れてしまうと抽象の意味がなくなる。
 
 **前提確認**
-- [ ] `dotnet build Portfolio.sln --configuration Release` が現状で通る
-- [ ] `backend/Portfolio.sln` に `Portfolio.Web` / `Portfolio.Web.Tests` の 2 プロジェクトがある（確認済み）
+- [ ] `pnpm build`（または `npm run build`）が現状で通る
+- [ ] `apps/api/src/` に既存のルーターやサービスがある（確認済み）
 
 **手順**
-1. クラスライブラリを作成しソリューションに追加（`backend/` 配下で実行）:
+1. ディレクトリを作成し、エントリポイントを置く:
    ```bash
-   dotnet new classlib -n Portfolio.Destinations -o Portfolio.Destinations -f net8.0
-   dotnet sln Portfolio.sln add Portfolio.Destinations/Portfolio.Destinations.csproj
+   mkdir -p apps/api/src/destinations
+   touch apps/api/src/destinations/index.ts
    ```
-2. `Portfolio.Web` から参照を追加（依存方向は Web → Destinations の一方向のみ）:
-   ```bash
-   dotnet add Portfolio.Web/Portfolio.Web.csproj reference Portfolio.Destinations/Portfolio.Destinations.csproj
-   ```
-3. `Portfolio.Destinations.csproj` を、リポジトリ標準（`Directory.Build.props` 継承）に合わせる。`Nullable=enable` / `TreatWarningsAsErrors=true` は props 側で効くはずなので、csproj 内に重複定義しない。`dotnet new` が吐いた `<Nullable>` 等は削除する。
-4. 既定生成された `Class1.cs` は削除。
+2. `tsconfig.json` のパスエイリアス（`paths`）があれば `@destinations` 等を追加してもよい（無くてもよい）。
+3. `apps/api/src/destinations/index.ts` は後続タスクで定義した型/クラスを re-export する入口にする。今は空ファイルでよい。
+4. HTTP フレームワーク（Express / NestJS）への import をこのモジュール内に入れない（`express`/`@nestjs/common` 等の import を禁止）。
 
 **完了確認**
-- [ ] `dotnet build Portfolio.sln --configuration Release` が通る
-- [ ] `Portfolio.Destinations` が `Microsoft.AspNetCore.*` を参照していない（Web 非依存）
-- [ ] `Portfolio.Web` のビルドが `Portfolio.Destinations` を引けている
+- [ ] `pnpm build` が通る
+- [ ] `apps/api/src/destinations/index.ts` が存在する
+- [ ] ディレクトリ内に `express` / `@nestjs/common` 等の HTTP フレームワーク import が無い
 
 **詰まったら**
-- `TreatWarningsAsErrors` で `Class1.cs` 未使用警告 → ファイルを消す
-- `net8.0` 以外の TFM が入った → `global.json` の SDK と一致させ `-f net8.0` を明示
+- TypeScript の strict モードでエラー → `tsconfig.json` の `strict: true` に合わせ、`noImplicitAny` を意識する
+- パスが通らない → `tsconfig.json` の `rootDir` / `outDir` 設定を確認
 
 **AI 依頼テンプレ**: なし（自分で構成を決める範囲）
 
 ---
 
-## Day1-2. `ITicketDestination` インターフェース + record 型 4 つを定義 [自分（中核）]
+## Day1-2. `ITicketDestination` interface + 型 4 つを定義 [自分（中核）] [BE]
 
 **目的**
-このスプリント全体の **設計の中核**。起票先を抽象化する 1 枚のインターフェースと、それが受け渡す値型を確定する。ここを握れば「Adapter パターンで起票先を抽象化した。フィールドマッピングは JSONB で柔軟に持たせ、テナント側で設定可能にした」と面接で語れる（[`06_destinations.md:198-202`](../06_destinations.md)）。
+このスプリント全体の **設計の中核**。起票先を抽象化する 1 枚の interface と、それが受け渡す値型を確定する。ここを握れば「Adapter パターンで起票先を抽象化した。フィールドマッピングは JSONB で柔軟に持たせ、テナント側で設定可能にした」と面接で語れる（[`06_destinations.md:198-202`](../06_destinations.md)）。
 
 **自分で書く理由**
 インターフェース定義は [`09_task_split.md:23`](../09_task_split.md) で明示的に [自分] 指定された箇所。実装（アダプタ）を AI に投げる前に、型の境界を自分で固める必要がある。「俺が握った契約に AI に実装させた」と言える状態を作る。
@@ -60,196 +57,205 @@
 - [ ] Day1-1 完了
 
 **手順**
-1. `Portfolio.Destinations/ITicketDestination.cs` を作成。**設計書 06 章 [`06_destinations.md:8-45`](../06_destinations.md) のシグネチャを 1:1 で写す**。自分で確定させるのは「どんなメンバを持つ契約か」なので、骨格だけ示し、メンバは設計書を見て埋める:
-   ```csharp
-   using System.Text.Json;
+1. `apps/api/src/destinations/types.ts` を作成。**設計書 06 章 [`06_destinations.md:8-45`](../06_destinations.md) のシグネチャを 1:1 で写す**。骨格だけ示し、メンバは設計書を見て埋める:
+   ```typescript
+   // Guid は TypeScript では string で表現する（06 章仕様どおり）
+   export type TicketPriority = 'low' | 'normal' | 'high' | 'urgent';
 
-   namespace Portfolio.Destinations;
+   export interface DestinationConfig {
+     // 3 つのメンバを持つ:
+     //   publicConfig: URL / project_id 等の非秘匿設定（destinations.config 由来）→ Record<string, unknown>
+     //   secretValue : Secret Manager から取得した API キー → string
+     //   fieldMapping: 優先度変換等（destinations.field_mapping 由来）→ Record<string, unknown>
+     // ここを自分で実装: interface 宣言。secretValue のすぐ上に
+     //   「Secret Manager 由来・appsettings/env 禁止・ログに出さない」コメントを付ける
+   }
 
-   public interface ITicketDestination
-   {
-       // ここを自分で実装: 06 章のインターフェース定義を写す。
-       //   - kind を返す read-only プロパティ（"redmine" / "github_issues" と一致）
-       //   - 接続テスト用の非同期メソッド（DestinationConfig + CancellationToken → TestConnectionResult）
-       //   - 起票用の非同期メソッド（Ticket + DestinationConfig + CancellationToken → TicketSubmitResult）
-       // 戻り値型は手順 2 で定義する record 型。
+   export interface Ticket {
+     // 起票 1 件を表す型。title / bodyMarkdown / priority(TicketPriority) /
+     //   tenantId(string) / knowledgeEntryId(string) を持つ。
+     // ここを自分で実装: interface 宣言（06 章定義どおり。inquiry id は持たせない）。
+   }
+
+   export interface TicketSubmitResult {
+     // 起票結果: success(boolean) / externalId(string | null) /
+     //   externalUrl(string | null) / errorMessage(string | null)
+     // ここを自分で実装: interface 宣言。
+   }
+
+   export type TestConnectionFailureReason =
+     | 'none'
+     | 'invalidApiKey'
+     | 'unreachable'
+     | 'forbidden'
+     | 'unknown';
+
+   export interface TestConnectionResult {
+     // 06 章「成功 / API キー無効 / URL 到達不可 / 権限不足」を型で表現する。
+     // success(boolean) / failureReason(TestConnectionFailureReason) / message(string | null)
+     // ここを自分で実装: interface 宣言。
+   }
+
+   export interface ITicketDestination {
+     // ここを自分で実装: 06 章のインターフェース定義を写す。
+     //   - kind を返す readonly プロパティ（"redmine" / "github_issues" と一致）
+     //   - 接続テスト用の非同期メソッド（config: DestinationConfig → Promise<TestConnectionResult>）
+     //   - 起票用の非同期メソッド（ticket: Ticket, config: DestinationConfig → Promise<TicketSubmitResult>）
    }
    ```
-2. `Portfolio.Destinations/Models/` に値型を 4 つ + enum を置く。**06 章 [`06_destinations.md:8-45`](../06_destinations.md)（型定義）と [`06_destinations.md:166-172`](../06_destinations.md)（接続テスト結果のテキスト）を型化する**。各 record の「何を持つか」だけ示すので、メンバ（プロパティ名・型・順序）は設計書を見て自分で確定する:
-   ```csharp
-   // Models/DestinationConfig.cs
-   // 3 つのメンバを持つ record:
-   //   PublicConfig: URL / project_id 等の非秘匿設定（destinations.config 由来）→ JsonElement
-   //   SecretValue : Vault から復号した API キー → string
-   //   FieldMapping: 優先度変換等（destinations.field_mapping 由来）→ JsonElement
-   // ここを自分で実装: record 宣言。SecretValue のすぐ上に
-   //   「Vault 由来・appsettings 禁止・ToString() でログに出さない」コメントを付ける
-   //   （backend/CLAUDE.md の secret 非ログ規約）。
-
-   // Models/Ticket.cs
-   // 起票 1 件を表す record。Title / BodyMarkdown / TicketPriority(string: low/normal/high/urgent) /
-   //   TenantId(Guid) / KnowledgeEntryId(Guid) を持つ。
-   // ここを自分で実装: record 宣言（06 章定義どおり。inquiry id は持たせない）。
-
-   // Models/TicketSubmitResult.cs
-   // 起票結果の record: Success(bool) / ExternalId(string?) / ExternalUrl(string?) / ErrorMessage(string?)。
-   // ここを自分で実装: record 宣言。
-
-   // Models/TestConnectionResult.cs
-   // 06 章「成功 / API キー無効 / URL 到達不可 / 権限不足」を型で表現する。
-   // 失敗理由を enum にして UI 表示・再試行判断で分岐できるようにする。
-   // ここを自分で実装:
-   //   - enum TestConnectionFailureReason（None / InvalidApiKey / Unreachable / Forbidden / Unknown）
-   //   - record TestConnectionResult（Success(bool) / FailureReason(enum) / Message(string?)）
-   ```
-3. `record` は `09_task_split.md` / `backend/CLAUDE.md`（DTO は record）に従う。`SecretValue` は **`ToString()` でログに出さない**こと（`backend/CLAUDE.md` の secret 非ログ規約）をコメントに明記。
+2. `secretValue` のすぐ上に **「Secret Manager 由来・appsettings/env 禁止・ログに出さない」** コメントを付ける。
+3. `apps/api/src/destinations/index.ts` から全型を re-export する。
 
 **完了確認**
-- [ ] `dotnet build` が通る
-- [ ] `DestinationConfig.SecretValue` のすぐ上に「Vault 由来・appsettings 禁止・非ログ」のコメントがある
-- [ ] 4 record + 1 enum + interface が `Portfolio.Destinations` 名前空間に揃う
+- [ ] `pnpm build`（または `tsc --noEmit`）が通る
+- [ ] `DestinationConfig.secretValue` のすぐ上に「Secret Manager 由来・非ログ」のコメントがある
+- [ ] 4 型 + 1 union type + interface が `destinations/types.ts` に揃い、`index.ts` から export される
 
 **詰まったら**
-- `JsonElement` の using が無くてビルド失敗 → `System.Text.Json`（Newtonsoft は禁止、`backend/CLAUDE.md`）
-- 優先度を enum にすべきか迷う → MVP は 06 章どおり `string`（"low"/"normal"/"high"/"urgent"）のまま。マッピングは Day3-4 で JSONB を引く
+- `unknown` vs `any` → `Record<string, unknown>` を使う。`any` は禁止（`strict` 設定に合わせる）
+- 優先度を union type にすべきか迷う → MVP は 06 章どおり `'low'|'normal'|'high'|'urgent'` の union。マッピングは Day3-4 で JSONB を引く
 
 **AI 依頼テンプレ**: なし（自分で書く範囲。型が確定したら Day1-4 / Day2 で AI に渡す）
 
 ---
 
-## Day1-3. `DestinationRegistry`（kind → 実装解決）+ DI 登録 [自分]
+## Day1-3. `DestinationRegistry`（kind → 実装解決）+ DI/ファクトリ登録 [自分] [BE]
 
 **目的**
 `destinations.kind`（`"redmine"` / `"github_issues"`）の文字列から、対応する `ITicketDestination` 実装を解決する仕組みを置く。これが Adapter パターンの「差し替え点」。
 
 **自分で書く理由**
-依存解決の戦略（DI で複数実装を登録し、`Kind` でルックアップ）は設計判断。新しい起票先を「実装を 1 つ足して登録するだけ」で増やせる構造を自分で設計したと語る要所（[`06_destinations.md:196`](../06_destinations.md)）。
+依存解決の戦略（ファクトリ/DI で複数実装を登録し、`kind` でルックアップ）は設計判断。新しい起票先を「実装を 1 つ足して登録するだけ」で増やせる構造を自分で設計したと語る要所（[`06_destinations.md:196`](../06_destinations.md)）。
 
 **前提確認**
 - [ ] Day1-2 完了
-- [ ] `infra/db/migrations/0001_schema.sql:123` の `kind IN ('redmine','github_issues')` 制約を確認（`Kind` 文字列はこれと一致させる）
+- [ ] `infra/db/migrations/0001_schema.sql:123` の `kind IN ('redmine','github_issues')` 制約を確認（`kind` 文字列はこれと一致させる）
 
 **手順**
-1. `Portfolio.Destinations/DestinationRegistry.cs` — 解決インターフェースと実装の骨格。**ルックアップの中身（kind → 実装の辞書化と Resolve）は自分で書く**:
-   ```csharp
-   namespace Portfolio.Destinations;
+1. `apps/api/src/destinations/registry.ts` — 解決インターフェースと実装の骨格。**ルックアップの中身（kind → 実装の Map 化と resolve）は自分で書く**:
+   ```typescript
+   import type { ITicketDestination } from './types';
 
-   public interface IDestinationRegistry
-   {
-       // kind 不一致や未登録なら例外（呼び出し側が握りつぶさないよう明示失敗）
-       ITicketDestination Resolve(string kind);
+   export interface IDestinationRegistry {
+     // kind 不一致や未登録なら例外（呼び出し側が握りつぶさないよう明示失敗）
+     resolve(kind: string): ITicketDestination;
    }
 
-   // DI が注入する全 ITicketDestination 実装を kind で引けるようにするのが役割。
-   public sealed class DestinationRegistry(IEnumerable<ITicketDestination> destinations)
-       : IDestinationRegistry
-   {
+   export class DestinationRegistry implements IDestinationRegistry {
+     private readonly _map: Map<string, ITicketDestination>;
+
+     constructor(destinations: ITicketDestination[]) {
        // ここを自分で実装:
-       //   - 注入された destinations を d.Kind をキーに辞書化する（IReadOnlyDictionary に保持）。
-       //     kind は DB の CHECK 制約で小文字固定 → StringComparer.Ordinal で十分。
-       //   - Resolve(kind): 辞書に有れば返す。無ければ NotSupportedException を投げて明示失敗にする
+       //   - 注入された destinations を d.kind をキーに Map 化する。
+       //     kind は DB の CHECK 制約で小文字固定。
+       //   - resolve(kind): Map に有れば返す。無ければ Error を throw して明示失敗にする
        //     （未登録 kind を握りつぶさない）。
+     }
+
+     resolve(kind: string): ITicketDestination {
+       // ここを自分で実装
+       throw new Error('not implemented');
+     }
    }
    ```
-2. DI 登録用の拡張メソッド `Portfolio.Destinations/ServiceCollectionExtensions.cs` を置く（実装の登録は Day 2 で各アダプタを足すが、枠だけ先に作る）:
-   ```csharp
-   using Microsoft.Extensions.DependencyInjection;
+2. DI/ファクトリ登録用の関数 `apps/api/src/destinations/bootstrap.ts` を置く（実装の登録は Day 2 で各アダプタを足すが、枠だけ先に作る）:
+   ```typescript
+   import { DestinationRegistry } from './registry';
+   import type { ITicketDestination } from './types';
 
-   namespace Portfolio.Destinations;
-
-   public static class ServiceCollectionExtensions
-   {
-       public static IServiceCollection AddTicketDestinations(this IServiceCollection services)
-       {
-           // ここを自分で実装:
-           //   - IDestinationRegistry → DestinationRegistry を Singleton 登録。
-           //   - 各アダプタは Day2 でここに AddSingleton<ITicketDestination, XxxDestination>() を足す（今は枠だけ）。
-           //   - 末尾で services を返す（拡張メソッドの作法）。
-           return services;
-       }
+   export function createDestinationRegistry(
+     destinations: ITicketDestination[]
+   ): DestinationRegistry {
+     // ここを自分で実装:
+     //   - 渡された destinations で DestinationRegistry を生成して返す。
+     //   - 各アダプタは Day 2 でここの destinations 配列に追加する（今は空配列でよい）。
+     return new DestinationRegistry(destinations);
    }
    ```
-   - `Microsoft.Extensions.DependencyInjection.Abstractions` パッケージ参照が必要なら追加（`dotnet add Portfolio.Destinations/Portfolio.Destinations.csproj package Microsoft.Extensions.DependencyInjection.Abstractions`）。
-3. `Portfolio.Web/Program.cs` の `builder.Services` 群（`AddHealthChecks()` の手前あたり）に `builder.Services.AddTicketDestinations();` を 1 行追加。
+3. アプリのエントリポイント（`apps/api/src/app.ts` 等）で `createDestinationRegistry([])` を呼び、DI コンテナ（NestJS なら Module、Express なら手動 DI）に登録する（枠だけ、実アダプタは Day2 で追加）。
+4. `apps/api/src/destinations/index.ts` から `IDestinationRegistry` / `DestinationRegistry` / `createDestinationRegistry` を re-export する。
 
 **完了確認**
-- [ ] `dotnet build Portfolio.sln` が通る
-- [ ] `Program.cs` に `AddTicketDestinations()` がある
-- [ ] `Resolve("nope")` が `NotSupportedException`（軽い単体テストで確認してもよい）
+- [ ] `pnpm build` が通る
+- [ ] アプリ起動時に `createDestinationRegistry` が呼ばれる
+- [ ] `registry.resolve('nope')` が `Error` を throw する（簡単な単体テストで確認してもよい）
 
 **詰まったら**
-- `IEnumerable<ITicketDestination>` が空で DI 解決時にエラーにならないか不安 → MVP は空でも可（Resolve 時に初めて失敗）。Day 2 で実装登録後に Resolve が通るのを確認する
-- `StringComparer.Ordinal` か `OrdinalIgnoreCase` か → `kind` は DB の CHECK 制約で小文字固定なので `Ordinal` で十分
+- `Map` のキー大文字小文字が不安 → `kind` は DB の CHECK 制約で小文字固定なので、`Map<string, ...>` で `.get(kind)` そのままで十分
+- NestJS の場合、Provider をどう定義するか → `useFactory` で `createDestinationRegistry(adapters)` を返す形にする
 
 **AI 依頼テンプレ**: なし（自分で書く範囲）
 
 ---
 
-## Day1-4. 起票本文 Markdown 化（既存 Streamlit `build_description` の C# 移植）[AI]
+## Day1-4. 起票本文 Markdown 化（既存 Streamlit `build_description` の TypeScript 移植）[AI] [BE]
 
 **目的**
 動的フォームで集めた値を起票本文（Markdown）に組み立てる純関数を作る。既存 Streamlit 版 `build_description` のロジックをそのまま移植する（[`10_existing_streamlit.md:104`](../10_existing_streamlit.md) で「そのまま流用」と決定済み）。出力例は [`06_destinations.md:115-128`](../06_destinations.md)。
 
 **前提確認**
-- [ ] Day1-2 完了（`Ticket` の `BodyMarkdown` にこの出力を入れる）
+- [ ] Day1-2 完了（`Ticket` の `bodyMarkdown` にこの出力を入れる）
 - [ ] [`06_destinations.md:109-130`](../06_destinations.md) の本文フォーマット例を AI に見せられる
 - [ ] 既存 `redmine_client.py` の `build_description` 実物（PoC リポジトリ）を参照できるなら添付する。無ければ 06 章の例を仕様とする
 
 **自分が先に決めること**
 - [ ] フッターに含める内部 ID: `問題ID = knowledge_entry id`、`問い合わせID = inquiry id`（06 章の例に準拠）。外部チケットから内部 ID を遡及できるようにするのが目的（[`06_destinations.md:130`](../06_destinations.md)）
-- [ ] 入力は「ラベル → 値」の順序付きペア列（`IReadOnlyList<(string Label, string Value)>` 想定）。Day 4 のフォームから来る形に寄せる
+- [ ] 入力は「ラベル → 値」の順序付きペア列（`Array<{ label: string; value: string }>` 想定）。Day 4 のフォームから来る形に寄せる
 
 **AI 依頼テンプレ**
 ```
-Portfolio.Destinations クラスライブラリに、起票本文を Markdown 化する純粋なクラス
-TicketBodyBuilder を書いてほしい。Web 非依存（System.Text のみ）。
+apps/api/src/destinations/ モジュールに、起票本文を Markdown 化する純粋な関数
+buildTicketBody を書いてほしい。Node.js / ブラウザ非依存（標準 TypeScript のみ）。
 
 仕様（design/06_destinations.md の本文フォーマット例に準拠）:
-- public static string Build(string sectionTitle,
-      IReadOnlyList<(string Label, string Value)> fields,
-      Guid knowledgeEntryId, Guid inquiryId)
+- export function buildTicketBody(
+      sectionTitle: string,
+      fields: Array<{ label: string; value: string }>,
+      knowledgeEntryId: string,
+      inquiryId: string
+  ): string
 - 出力は:
   ## {sectionTitle}
 
-  **{Label}:** {Value}
-  （fields の各要素を 1 行ずつ。Value 内の改行は維持）
+  **{label}:** {value}
+  （fields の各要素を 1 行ずつ。value 内の改行は維持）
 
   ---
   *このチケットは社内チャットボットから自動起票されました*
   *問題ID: {knowledgeEntryId}*
   *問い合わせID: {inquiryId}*
 - fields が空なら本文セクションは見出しのみ＋区切り線＋フッター
-- Value に Markdown 特殊文字が含まれてもエスケープは不要（社内利用前提・PoC 仕様踏襲）
+- value に Markdown 特殊文字が含まれてもエスケープは不要（社内利用前提・PoC 仕様踏襲）
 
-テストも Portfolio.Web.Tests に TicketBodyBuilderTests として:
+テストも apps/api/src/destinations/__tests__/buildTicketBody.test.ts として Vitest（または Jest）で:
 - fields 2 件のときの完全一致テスト（期待文字列をベタ書き）
 - fields 0 件のとき見出し＋フッターのみ
 - フッターに knowledgeEntryId / inquiryId が両方含まれる
-を書いてほしい。System.Text.Json のみ、Newtonsoft 禁止。
+を書いてほしい。外部ライブラリなし（Node.js 組み込みのみ）。
 ```
 
 **自分の確認ポイント**
 - [ ] 出力が 06 章の例とフォーマット一致（見出し `##`、`**ラベル:**`、区切り `---`、フッター 3 行）
 - [ ] `knowledgeEntryId` と `inquiryId` が両方フッターに出る（遡及性の根幹）
-- [ ] Web 非依存（`using Microsoft.AspNetCore` が無い）
+- [ ] HTTP フレームワーク依存が無い（`import express` / `import { Injectable }` 等が無い）
 - [ ] テストが green
 
 **詰まったら**
-- AI が `inquiry id` を Ticket に持たせようとする → `Ticket` record には inquiry id は無い（06 章定義）。`Build` の引数で別途渡す設計に留める
+- AI が `inquiryId` を Ticket に持たせようとする → `Ticket` 型には inquiry id は無い（06 章定義）。`buildTicketBody` の引数で別途渡す設計に留める
 - フォーマットが微妙にずれる → 期待文字列をベタ書きしたテストを正とし、実装をそれに合わせさせる
 
 ---
 
 ## Day 1 終了チェックリスト
 
-- [ ] `Portfolio.Destinations` が `Portfolio.sln` にあり、Web から一方向参照されている
-- [ ] `ITicketDestination` + `DestinationConfig` / `Ticket` / `TicketSubmitResult` / `TestConnectionResult`（+ 失敗理由 enum）が定義済み
-- [ ] `DestinationRegistry` と `AddTicketDestinations()` があり、`Program.cs` で登録済み
-- [ ] `TicketBodyBuilder` が 06 章の本文フォーマットを再現し、テストが green
-- [ ] `dotnet build Portfolio.sln --configuration Release` と `dotnet test` が通る
+- [ ] `apps/api/src/destinations/` が存在し、HTTP 層から一方向参照される構造になっている
+- [ ] `ITicketDestination` + `DestinationConfig` / `Ticket` / `TicketSubmitResult` / `TestConnectionResult`（+ `TestConnectionFailureReason` union）が定義済み
+- [ ] `DestinationRegistry` と `createDestinationRegistry()` があり、アプリ起動時に登録済み
+- [ ] `buildTicketBody` が 06 章の本文フォーマットを再現し、テストが green
+- [ ] `pnpm build` と `pnpm test` が通る
 
 ## Day 2 への引き継ぎメモ（自分宛て）
 
-- アダプタの `Kind` は DB の CHECK 制約（`'redmine'` / `'github_issues'`）と完全一致させる
-- アダプタは `AddTicketDestinations()` 内に `AddSingleton<ITicketDestination, ...>()` で足す
-- `SecretValue` は Vault 由来。Day 2 のアダプタは「config に既に復号済みキーが入っている」前提で書く（Vault 復号は Day 3）。テストではダミー文字列を渡す
+- アダプタの `kind` は DB の CHECK 制約（`'redmine'` / `'github_issues'`）と完全一致させる
+- アダプタは `createDestinationRegistry([new RedmineDestination(...), new GitHubIssuesDestination(...)])` の形で Day 2 で差し込む
+- `secretValue` は Secret Manager 由来。Day 2 のアダプタは「config に既に取得済みキーが入っている」前提で書く（Secret Manager 連携は Day 3）。テストではダミー文字列を渡す

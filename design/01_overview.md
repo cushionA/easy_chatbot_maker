@@ -32,16 +32,16 @@
 
 | 応募先 | 主訴求点 |
 |---|---|
-| **grasys** | クラウドインフラ、マルチテナント、RAG、ハイブリッド検索、無料運用設計 |
+| **データ収集・検索基盤・AI 系** | TS/Node フルスタック、ハイブリッド検索（Elasticsearch）、RAG、E2E テスト、マルチテナント、データ基盤（BigQuery）|
 | **汎用Web/SaaS** | プラットフォーム設計、Adapter パターン、共通モジュール、コスト感覚 |
-| Jambo | Service B（Ronkaku）側の訴求が中心、本サービスは副 |
+| コミュニケーション / ソーシャル系 | Service B（Ronkaku）側の訴求が中心、本サービスは副 |
 | ゲーム業界 | Service B 側の訴求が中心 |
 
 ## 主要機能（MVP）
 
 詳細は [08_features.md](08_features.md)。
 
-- 組織アカウント・認証（Supabase Auth）
+- 組織アカウント・認証（OIDC / JWT）
 - マスタアップロード（Excel/JSON、Phase 2 で PDF）
 - カテゴリ → コンボボックス → 自然言語の段階的分類
 - BM25 + Embedding ハイブリッド検索

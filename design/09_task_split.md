@@ -7,11 +7,26 @@
 - YES → 座布団さん自身が書く
 - NO → AI に任せる（仕様だけ握って、コード生成は委譲）
 
+## 層ラベル（凡例）
+
+委譲タグ（[自分]/[AI]）とは別軸で、各タスクが触れる **フルスタックの層** を明記する。研修・実務で偏りがちな層（特に `[INFRA]` `[TEST]`）を意識的に取りに行くための可視化。各 Sprint プラン（`sprintN_plan.md`）と day ファイル（`sprintN/dayX.md`）のタスク見出しで使用する。
+
+| ラベル | 範囲 |
+|---|---|
+| `[FE]` | フロントエンド: UI ページ/コンポーネント/フォーム描画/ルーティング・レイアウト/チャット UI/ウィジェットのクライアント側 |
+| `[BE]` | バックエンド: API/認証・認可/分類・RAG ロジック/起票 Adapter/サービス層/データアクセス/サーバ側バリデーション |
+| `[INFRA]` | インフラ: Docker/K8s/CI・CD/クラウド・ホスティング/DB ロール・拡張・マイグレーション・RLS ポリシー/シークレット/監視 |
+| `[TEST]` | テスト: 単体/結合/E2E/RLS 越境/テストデータ seed |
+| `[ML]` | 機械学習: Embedding サービス・モデル・再ランカー・ベクトル推論 |
+| `[設計]` | 上流設計: 要件定義/スキーマ設計/仕様明文化（コード実装を伴わない設計タスク） |
+
+委譲タグの後ろに併記する（例: `[自分] [BE]`）。複数層にまたがるタスクは主たる層を先頭に（最大 2、稀に 3。CRUD ページ = `[FE] [BE]`、取込＋埋め込み = `[BE] [ML]`）。
+
 ## 座布団さん自身が書く（説明責任が重い領域）
 
 ### 設計判断系
 
-- [x] **技術スタック確定**（C# + Python + 最小JS）← 完了
+- [x] **技術スタック確定**（TypeScript/Node + Python + React）← 完了
 - [x] **マルチテナント分離方針**（RLS 一択）← 完了
 - [x] **検索戦略**（BM25 + Embedding ハイブリッド RRF + match_count）← 完了
 - [x] **DB スキーマ全体**← 設計完了、SQL 生成は AI に委譲
@@ -22,11 +37,11 @@
 
 - [ ] **`ITicketDestination` インターフェース定義**（実装は AI）
 - [ ] **LLM プロンプト設計**（Gemini 用、動的フォーム推論・分類用）
-- [ ] **ハイブリッド検索の RRF + match_count 重み付け式**（C# 実装）
+- [ ] **ハイブリッド検索の RRF + match_count 重み付け式**（TypeScript 実装）
 - [ ] **認証・テナント切替フロー**（誰がどのテナントに属するか、JWT クレーム設計）
 - [ ] **未分類キュー → マスタ反映の運用フロー**
 - [ ] **RLS ポリシーテスト項目の定義**（漏洩したらアウトな箇所）
-- [ ] **既存 Streamlit 版 `classifier.py` の C# 再設計**（一次翻訳は AI、設計判断は自分）
+- [ ] **既存 Streamlit 版 `classifier.py` の TypeScript 再設計**（一次翻訳は AI、設計判断は自分）
 
 ### 採用面接向け資料
 
@@ -38,17 +53,17 @@
 ### コード生成
 
 - [ ] **`migrations/0001_init.sql`**（[03_db_schema.md](03_db_schema.md) から SQL ファイル化）
-- [ ] **EF Core エンティティクラス**（schema から自動生成）
+- [ ] **TypeScript の型/エンティティ定義**（schema から自動生成）
 - [ ] **RLS ポリシーの SQL**（方針が固まったあと、実 SQL）
-- [ ] **既存 Python `classifier.py` の C# 一次移植**（座布団さんがレビュー）
-- [ ] **既存 Python `forms.py` のバリデーションロジック C# 化**
-- [ ] **既存 Python `redmine_client.py` の C# 移植**（Redmine Adapter）
+- [ ] **既存 Python `classifier.py` の TypeScript 一次移植**（座布団さんがレビュー）
+- [ ] **既存 Python `forms.py` のバリデーションロジック TypeScript 化**
+- [ ] **既存 Python `redmine_client.py` の TypeScript 移植**（Redmine Adapter）
 - [ ] **GitHub Issues Adapter 実装**（インターフェース仕様から）
 - [ ] **FastAPI Embedding 推論サーバ**（既存 `knowledge.py` をラップ）
 
 ### UI
 
-- [ ] **Blazor コンポーネント実装**（コンボボックス・動的フォーム・チャット UI）
+- [ ] **React コンポーネント実装**（コンボボックス・動的フォーム・チャット UI）
 - [ ] **CSS / レイアウト**（Tailwind 等で標準化）
 - [ ] **`embed.js` 埋め込みウィジェット**（Shadow DOM、CORS 対応）
 - [ ] **管理画面**（マスタ管理、未分類キュー、利用ログ）
@@ -56,10 +71,10 @@
 ### インフラ・運用
 
 - [ ] **GitHub Actions CI/CD YAML**（ビルド・テスト・デプロイ）
-- [x] **Dockerfile / docker-compose.yml**（ローカル開発 + Plan A 切替時用）
-- [x] **Caddy 設定**（HTTPS 自動化、Plan A 移行時用の雛形）
+- [x] **Dockerfile / docker-compose.yml**（ローカル開発 / 本番 Docker）
+- [x] **Caddy / リバースプロキシ設定**（HTTPS 自動化）
 - [ ] **Sentry 連携**（エラー監視、Phase 2）
-- [ ] **Keep-alive ping cron**（Plan B の Supabase 防停止）
+- [ ] **コールドスタート対策**（任意のウォームアップ cron）
 
 ### テスト
 
@@ -79,9 +94,9 @@
 | 対象 | 最初の1個 | 残り |
 |---|---|---|
 | **`ITicketDestination` 実装** | RedmineDestination（既存 Streamlit から） | GitHubIssuesDestination は AI |
-| **Blazor コンポーネント** | チャット画面 1ページ | 他ページは AI |
+| **React コンポーネント** | チャット画面 1ページ | 他ページは AI |
 | **RLS ポリシー** | knowledge_entries 1テーブル分 | 他テーブルは AI |
-| **EF Core マイグレーション** | 最初の1つを設定 | 後続は AI が増分生成 |
+| **DB マイグレーション（SQL）** | 最初の1つを設定 | 後続は AI が増分生成 |
 
 ## 学習目的・成長機会
 
@@ -89,11 +104,11 @@
 
 | 領域 | 学べること |
 |---|---|
-| マルチテナント設計 | RLS, Vault, JWT, テナント分離テスト |
-| ハイブリッド検索 | BM25, pgvector, RRF, ランキング設計 |
+| マルチテナント設計 | RLS, Secret Manager, OIDC/JWT, テナント分離テスト |
+| ハイブリッド検索 | BM25, Elasticsearch kNN, RRF, ランキング設計 |
 | Adapter パターン | 抽象化、依存性逆転、テスト容易性 |
-| Blazor Server | C# でのフルスタック開発 |
-| pgvector | ベクトル DB の基本（HNSW、コサイン類似度） |
+| TypeScript フルスタック | React + Node でのフルスタック開発 |
+| Elasticsearch | 全文 + ベクトル検索（BM25, kNN, アナライザ） |
 | 無料運用 | コスト感覚、スケール時の有料化判断 |
 | プロンプト設計 | LLM への構造化出力指示 |
 | データ設計 | 配置戦略、最小化原則 |
