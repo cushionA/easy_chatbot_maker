@@ -1,20 +1,5 @@
 version: 2
 updates:
-  - package-ecosystem: nuget
-    directory: /backend/Portfolio.Web
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 5
-    groups:
-      aspnetcore:
-        patterns: ["Microsoft.AspNetCore.*", "Microsoft.EntityFrameworkCore*"]
-
-  - package-ecosystem: nuget
-    directory: /backend/Portfolio.Web.Tests
-    schedule:
-      interval: weekly
-    open-pull-requests-limit: 3
-
   - package-ecosystem: pip
     directory: /embedding
     schedule:
