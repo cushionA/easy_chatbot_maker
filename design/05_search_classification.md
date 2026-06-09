@@ -38,38 +38,63 @@
 
 ### ④ キーワード完全一致
 
-- `tsvector` の websearch_to_tsquery で完全一致部分一致を判定
+- Elasticsearch/OpenSearch の `term` クエリ（`name.raw` / `keywords.raw` の keyword サブフィールド）で完全一致判定
 - 問題名 exact match → 即確定（top1のみ）
 - 部分一致は信頼しすぎず、ハイブリッド検索に流す
 
 ### ⑤ ハイブリッド検索（MVP の本体）
 
-#### 5-1. BM25（Postgres tsvector）
+#### 5-1. BM25（Elasticsearch/OpenSearch 全文検索）
 
-```sql
-SELECT id, ts_rank(search_text, query) AS bm25_score
-  FROM knowledge_entries
- WHERE search_text @@ websearch_to_tsquery('simple', :query)
-   AND tenant_id = :tenant_id
-   AND category_id = :category_id  -- 「わからない」時は省略
- ORDER BY bm25_score DESC
- LIMIT 20;
+`name`・`keywords`・`example_queries` フィールドを対象に `multi_match` クエリを発行。
+日本語トークナイズには **kuromoji アナライザ**を使用。
+
+```json
+{
+  "query": {
+    "bool": {
+      "must": {
+        "multi_match": {
+          "query": "<query>",
+          "fields": ["name", "keywords", "example_queries"],
+          "analyzer": "kuromoji"
+        }
+      },
+      "filter": [
+        { "term": { "tenant_id": "<tenant_id>" } },
+        { "term": { "category_id": "<category_id>" } }
+      ]
+    }
+  },
+  "size": 20
+}
 ```
 
-#### 5-2. Embedding（pgvector）
+「わからない」時は `category_id` の filter を省略する。
 
-```sql
-SELECT id, 1 - (embedding <=> :query_vec) AS embedding_score
-  FROM knowledge_entries
- WHERE embedding IS NOT NULL
-   AND embedding_model = :current_model
-   AND tenant_id = :tenant_id
-   AND category_id = :category_id
- ORDER BY embedding <=> :query_vec
- LIMIT 20;
+#### 5-2. Embedding（Elasticsearch/OpenSearch kNN）
+
+Python FastAPI の `/embed`（`mode=query`、`query:` プレフィクス付き）でベクトルを取得し、
+`dense_vector` フィールド（768次元、cosine）に対して kNN クエリを発行。
+
+```json
+{
+  "knn": {
+    "field": "embedding",
+    "query_vector": [/* 768次元ベクトル */],
+    "k": 20,
+    "num_candidates": 100,
+    "filter": [
+      { "term": { "tenant_id": "<tenant_id>" } },
+      { "term": { "category_id": "<category_id>" } },
+      { "term": { "embedding_model": "<current_model>" } }
+    ]
+  }
+}
 ```
 
-`<=>` は pgvector のコサイン距離演算子。
+`filter: { term: { tenant_id }}` は必須（Elasticsearch/OpenSearch に RLS 機構はない。詳細は [04_security_multitenant.md](04_security_multitenant.md)）。
+`category_id` 条件も filter で付与し、「わからない」時は省略する。
 
 #### 5-3. RRF（Reciprocal Rank Fusion）
 
@@ -83,6 +108,8 @@ RRF_score(d) = Σ 1 / (k + rank_i(d))
 - `rank_i(d)` はランキング i における d の順位
 - BM25 と Embedding の rank を上記式で結合
 
+Elasticsearch/OpenSearch ネイティブの Reciprocal Rank Fusion (`rank` API) が利用可能な場合はそちらを使い、そうでなければアプリ側で `Σ 1/(k+rank)` を計算する。MVP は **Elasticsearch 8.x を基準**とし、OpenSearch を使う場合は kNN / RRF の構文差異に注意する。
+
 #### 5-4. match_count 重みの加味
 
 ```
@@ -91,6 +118,7 @@ final_score = RRF_score + α * log(1 + match_count)
 
 - `α = 0.1` 初期値、後でチューニング
 - `log` で頭打ち（match_count=1 と 100 で 100倍にならないように）
+- アプリ側で加算するか、Elasticsearch の `function_score` で組み込む
 
 #### 5-5. 閾値判定
 
@@ -104,7 +132,7 @@ final_score = RRF_score + α * log(1 + match_count)
 
 既存 Streamlit 版の `llm_client.py` ロジックをそのまま移植：
 
-- `classify` プロンプト + 構造化出力（Pydantic スキーマ → C# record）
+- `classify` プロンプト + 構造化出力（構造化出力スキーマを zod 等で検証）
 - Gemini API へ JSON Schema を含む format 指定で呼出
 - Pattern ID で行を引き当て
 
@@ -143,7 +171,7 @@ BYOK 設定がなければこの段はスキップして即 ⑦ へ。
 
 `field_definitions.validation_rule_id` 経由で `validation_rules` を参照、UI 入力時とサーバ送信時の両方で検証。
 
-詳細：既存 Streamlit 版 `forms.py` の `validate_field` ロジックを C# に移植。
+詳細：既存 Streamlit 版 `forms.py` の `validate_field` ロジックを TypeScript に移植。
 
 ## 引用元ハイライト
 
@@ -180,41 +208,46 @@ BYOK 設定がなければこの段はスキップして即 ⑦ へ。
 `knowledge_entries.embedding_model` で混在許容：
 
 1. 新モデル決定 → アプリの `current_model` を切替
-2. 検索時、新モデルと一致する embedding だけ Embedding 検索対象
-3. 古いモデルの行は BM25 のみで検索
+2. 検索時、kNN クエリの filter に `embedding_model = current_model` を指定することで新モデルの行のみを Embedding 検索対象とする
+3. 古いモデルの行は BM25 のみで検索（kNN filter から除外される）
 4. バックグラウンドで段階的に再 embedding
 5. 全件移行完了したら旧モデル破棄
 
 ## 全文：ハイブリッド検索の擬似コード
 
-```csharp
-async Task<List<KnowledgeEntry>> Classify(string query, Guid tenantId, Guid? categoryId)
-{
-    // 1. キーワード完全一致
-    var exact = await ExactMatch(query, tenantId, categoryId);
-    if (exact.IsConfident) return exact.Results;
+```typescript
+async function classify(
+  query: string,
+  tenantId: string,
+  categoryId?: string
+): Promise<KnowledgeEntry[]> {
+  // 1. キーワード完全一致
+  const exact = await exactMatch(query, tenantId, categoryId);
+  if (exact.isConfident) return exact.results;
 
-    // 2. BM25
-    var bm25 = await Bm25Search(query, tenantId, categoryId, limit: 20);
+  // 2. BM25（ES multi_match + kuromoji）
+  const bm25 = await bm25Search(query, tenantId, categoryId, { size: 20 });
 
-    // 3. Embedding
-    var queryVec = await embeddingService.EncodeAsync(query);
-    var emb = await EmbeddingSearch(queryVec, tenantId, categoryId, limit: 20);
+  // 3. Embedding（FastAPI /embed?mode=query で query: プレフィクス付きベクトル取得 → ES kNN）
+  const queryVec = await fetchEmbedding(query); // POST /embed { text: "<query>", mode: "query" }（query: プレフィクスは /embed 側が付与）
+  const emb = await embeddingSearch(queryVec, tenantId, categoryId, { k: 20 });
 
-    // 4. RRF 結合
-    var rrf = ReciprocalRankFusion(bm25, emb, k: 60);
+  // 4. RRF 結合
+  const rrf = reciprocalRankFusion(bm25, emb, { k: 60 });
 
-    // 5. match_count 重み
-    foreach (var r in rrf)
-        r.Score += alpha * Math.Log(1 + r.MatchCount);
+  // 5. match_count 重み
+  for (const r of rrf) {
+    r.score += alpha * Math.log(1 + r.matchCount);
+  }
 
-    var top = rrf.OrderByDescending(r => r.Score).Take(3).ToList();
+  const top = rrf.sort((a, b) => b.score - a.score).slice(0, 3);
 
-    // 6. 閾値判定
-    if (top[0].Score < THRESHOLD_LOW && byokAvailable)
-        return await LlmFallback(query, tenantId, categoryId);
+  // 6. 閾値判定
+  if (top[0].score < THRESHOLD_LOW && byokAvailable) {
+    return llmFallback(query, tenantId, categoryId); // Gemini BYOK
+  }
 
-    return top;
+  return top;
 }
 ```
 

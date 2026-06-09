@@ -14,8 +14,8 @@
 
 | 機能 | 移行先 |
 |---|---|
-| Phase 管理（CATEGORY/CLASSIFY/COLLECT/CONFIRM/DONE） | Blazor のページ・コンポーネント階層に再構成 |
-| `session_state` | Blazor Server のサーバサイドコンポーネント状態 |
+| Phase 管理（CATEGORY/CLASSIFY/COLLECT/CONFIRM/DONE） | React のページ・コンポーネント階層に再構成 |
+| `session_state` | React の state + Node API のコンテキスト |
 | サイドバー（ナレッジ再読込・統計） | 管理画面の独立ページに分離 |
 | カテゴリバー | 共通ヘッダーコンポーネント |
 
@@ -27,7 +27,7 @@
 
 | 既存 | 新設計 |
 |---|---|
-| `data.xlsx` の `settings` シートで設定値管理 | `appsettings.json` + 環境変数で管理 |
+| `data.xlsx` の `settings` シートで設定値管理 | 環境変数（.env）で管理 |
 | `MOCK_MODE` | テスト用フラグとして継承 |
 | `EMBEDDING_MODEL_NAME` 等 | テナント別ではなく**システム全体で1つ**（embedding_model 列で行単位混在は許容） |
 | `REDMINE_*` 設定 | `destinations` テーブルでテナント別管理 |
@@ -37,11 +37,11 @@
 | 機能 | 流用度 | 新設計 |
 |---|---|---|
 | `load_knowledge` / `load_fields` / `load_categories` / `load_validations` | パース部分は流用 | Excel → DB INSERT に変更 |
-| `get_categories` / `get_category_maps` | UI 用ヘルパ | C# で同等機能 |
+| `get_categories` / `get_category_maps` | UI 用ヘルパ | TypeScript で同等機能 |
 | `filter_by_category` | カテゴリで絞込 | SQL `WHERE category_id = ?` で代替 |
 | `get_embedding_model` | SentenceTransformer ロード | FastAPI 推論サーバに移管 |
 | `build_embeddings` | embedding 生成 | FastAPI が担当 |
-| `load_all_embeddings` / `filter_embeddings` | キャッシュ管理 | pgvector に保存・HNSW で検索 |
+| `load_all_embeddings` / `filter_embeddings` | キャッシュ管理 | Elasticsearch に保存・kNN で検索 |
 | `parse_required_info` | カンマ区切りパース | DB は `text[]` 配列で持つ、パース不要 |
 | `get_fields_for_issue` | カテゴリ必須＋問題別必須の結合 | **ロジック流用**、`required_field_codes` 配列の結合に変更 |
 
@@ -49,8 +49,8 @@
 
 | 機能 | 流用度 | 新設計 |
 |---|---|---|
-| `build_query` | 直近3発言結合 | **そのまま流用**（C# 移植） |
-| `search_by_embedding` | コサイン類似度 Top-K | pgvector に置換、SQL で実装 |
+| `build_query` | 直近3発言結合 | **そのまま流用**（TypeScript 移植） |
+| `search_by_embedding` | コサイン類似度 Top-K | Elasticsearch の kNN に置換 |
 | `classify`（Embedding 主・LLM フォールバック） | ロジックの骨子は流用 | **BM25 + Embedding + match_count + LLM の4段に発展** |
 | `get_candidate_with_solution` | 候補に解決方法付与 | `auto_resolution` / `guidance_message` の2列に分離 |
 | MOCK_MODE 部分 | テスト用 | テスト時のみ使用 |
@@ -71,10 +71,10 @@ LLM フォールバック（BYOK 時のみ） → 該当なし ? 未分類キュ
 
 | 機能 | 流用度 | 新設計 |
 |---|---|---|
-| `render_field`（型別ウィジェット分岐） | ロジック流用 | Blazor コンポーネント (`<DynamicField>`) に再構成 |
-| `pd_isna` | NaN 判定 | C# では nullable 型で代替、不要 |
-| `render_form` | フォーム全体描画 | Blazor の `<EditForm>` + DataAnnotations |
-| `validate_field`（型別バリデーション） | **ロジック流用**（C# 移植） | + `is_multi` フィールド対応追加 |
+| `render_field`（型別ウィジェット分岐） | ロジック流用 | React コンポーネント (`<DynamicField>`) に再構成 |
+| `pd_isna` | NaN 判定 | TypeScript では null/undefined で代替、不要 |
+| `render_form` | フォーム全体描画 | React フォーム（react-hook-form）+ zod |
+| `validate_field`（型別バリデーション） | **ロジック流用**（TypeScript 移植） | + `is_multi` フィールド対応追加 |
 | `validate_form` | 全フィールドバリデーション | 同上 |
 | `format_collected_info` | 表示用フォーマット | 起票本文（Markdown）生成に統合 |
 
@@ -86,12 +86,12 @@ LLM フォールバック（BYOK 時のみ） → 該当なし ? 未分類キュ
 
 | 機能 | 流用度 | 新設計 |
 |---|---|---|
-| `build_llm_master_text` | マスタの整形 | **そのまま流用**（C# 移植） |
+| `build_llm_master_text` | マスタの整形 | **そのまま流用**（TypeScript 移植） |
 | `build_system_prompt` | システムプロンプト組立 | **プロンプトはそのまま流用** |
 | `classify_mock` | MOCK_MODE 用 | テスト用 |
 | `classify` | Ollama API 呼出 | **Gemini API 呼出に置換**（HTTP 直接） |
-| `classify_with_retry` | リトライラッパ | 同等機能を C# Polly 等で実装 |
-| `Pydantic ClassificationResult` | 構造化出力スキーマ | **C# record + System.Text.Json**で同等 |
+| `classify_with_retry` | リトライラッパ | TypeScript のリトライ（指数バックオフ）で実装 |
+| `Pydantic ClassificationResult` | 構造化出力スキーマ | **TypeScript の型 + zod**で同等 |
 
 **設計上の発展**：
 - Ollama（ローカル）→ Gemini API（クラウド、BYOK）
@@ -101,20 +101,20 @@ LLM フォールバック（BYOK 時のみ） → 該当なし ? 未分類キュ
 
 | 機能 | 流用度 | 新設計 |
 |---|---|---|
-| `build_description` | フォーム値の Markdown 化 | **そのまま流用**（C# 移植） |
+| `build_description` | フォーム値の Markdown 化 | **そのまま流用**（TypeScript 移植） |
 | Redmine REST API 呼出 | API 呼出パターン | `RedmineDestination` Adapter として再実装 |
 | MOCK_MODE 部分 | テスト用 | テスト用 |
 
 **設計上の発展**：
 - 単独ファイル → `ITicketDestination` インターフェース実装の1つ
 - GitHub Issues Adapter が並列で増える
-- API キーは Vault 経由で取得
+- API キーは Secret Manager 経由で取得
 
 ### `models.py` — データモデル
 
 | 既存 | 新設計 |
 |---|---|
-| `Candidate` / `ClassificationResult` (Pydantic) | C# record で同等定義 |
+| `Candidate` / `ClassificationResult` (Pydantic) | TypeScript の型で同等定義 |
 
 ## データファイル
 
@@ -130,7 +130,7 @@ LLM フォールバック（BYOK 時のみ） → 該当なし ? 未分類キュ
 | 既存ロジック | 新設計での扱い |
 |---|---|
 | **Embedding 検索 + LLM フォールバック戦略** | 戦略の妥当性は検証済み、本格 Web 版で「ハイブリッド検索 + LLM フォールバック」に進化 |
-| **構造化出力のスキーマ設計**（Pydantic） | C# の record に 1:1 移植 |
+| **構造化出力のスキーマ設計**（Pydantic） | TypeScript の型に 1:1 移植 |
 | **動的フォーム + バリデーション設計** | テーブル駆動の設計思想を継承 |
 | **カテゴリ別必須情報 + 問題別必須情報の結合** | `required_field_codes` 配列の結合ロジックで継承 |
 | **MOCK_MODE** | テストモードとして継承 |
@@ -141,9 +141,9 @@ LLM フォールバック（BYOK 時のみ） → 該当なし ? 未分類キュ
 
 > 「最初に Streamlit 版で PoC を作り、**Embedding + LLM フォールバック**という分類戦略の妥当性、**Excel 駆動の動的フォーム生成**の手応え、**カテゴリ別+問題別の必須情報結合**のロジックを検証した。
 >
-> 本格 Web 版では、PoC で固まった戦略を **C# + ASP.NET Core + Blazor Server** に載せ替え、以下を追加した：
+> 本格 Web 版では、PoC で固まった戦略を **TypeScript / Node.js（React + Node API）** に載せ替え、以下を追加した：
 >
-> - **マルチテナント設計**（RLS + Vault + JWT）
+> - **マルチテナント設計**（RLS + Secret Manager + OIDC/JWT）
 > - **ハイブリッド検索**（BM25 を加えて Embedding 単独の弱点を補完）
 > - **3段階エスカレーション**（自動回答 / ガイダンス / 直接起票）
 > - **複数起票先の抽象化**（Adapter パターン）

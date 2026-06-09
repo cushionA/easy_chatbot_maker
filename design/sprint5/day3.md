@@ -1,12 +1,12 @@
 # Sprint 5 Day 3 作業指示書（2026-06-06）
 
 > テーマ: **運用の締め**
-> 完了時の状態: admin がナレッジギャップ（自信なく回答した問い合わせ）を見て改善候補を判断でき、Supabase Free が 7 日無操作で止まらず、エラーが Sentry に飛び、匿名ポリシーを足しても既存テナント分離が壊れていないことが E2E で証明されている
+> 完了時の状態: admin がナレッジギャップ（自信なく回答した問い合わせ）を見て改善候補を判断でき、マネージド Postgres のコールドスタート対策（任意ウォームアップ cron）が入り、エラーが Sentry に飛び、匿名ポリシーを足しても既存テナント分離が壊れていないことが E2E で証明されている
 > 推定所要: 6〜8 時間
 
 ---
 
-## 5-3-1. ナレッジギャップ検出の指標定義 + 集計骨子 [自分]
+## 5-3-1. ナレッジギャップ検出の指標定義 + 集計骨子 [自分] [設計]
 
 **目的**
 「分類はしたが自信が低かった問い合わせ」を集計し、admin が「マスタに足すべき問題」を見つけられる指標を定義する。`inquiries.confidence_score` 集計の閾値・並び・グルーピングを自分で確定し、UI（5-3-2）は AI に渡す。
@@ -16,8 +16,8 @@
 
 **前提確認**
 - [ ] `design/05_search_classification.md:156-176`（ナレッジギャップ検出・暗黙シグナル）を読んだ
-- [ ] Day2-4 の `ThresholdLow`（低確信度の閾値）を流用する（新しい閾値を作らない）
-- [ ] `inquiries` の `matched_knowledge_id` / `confidence_score` / `raw_query` / `category_id`（`Data/Entities/Inquiry.cs`）を確認
+- [ ] Day2-4 の `THRESHOLD_LOW`（低確信度の閾値）を流用する（新しい閾値を作らない）
+- [ ] `inquiries` の `matched_knowledge_id` / `confidence_score` / `raw_query` / `category_id`（`apps/api/src/types/inquiry.ts`）を確認
 
 **指標定義（自分が確定し、5-3-2 の AI 依頼にそのまま渡す）**
 
@@ -47,21 +47,21 @@
 ```
 
 ヒント:
-- 閾値は Day2-4 の `ThresholdLow`（暫定 0.5）を流用する。**新しい閾値をここで作らない**
+- 閾値は Day2-4 の `THRESHOLD_LOW`（暫定 0.5）を流用する。**新しい閾値をここで作らない**
 - (G2) の `HAVING` の下限は「example_queries を増やすべき問題」だけを浮かせる目的。低すぎるとノイズ、高すぎると見落とす。自分で決めた根拠を書けるように
 
 > 指標判断: (G2) の `HAVING`（低確信ヒット数の下限）は「たまたま 1 回低かった」をノイズとして落とすため。これにより「example_queries を増やすべき問題」が浮き上がる。これが `unclassified_queue`（新規に作るべき問題）との運用上の使い分け = 「(G2) は既存問題の表現を磨く / 未分類キューは新問題を足す」。
 
 **完了確認**
-- [ ] (G1)(G2) を psql で実行して期待どおりに返る
-- [ ] 閾値 0.5 が Day2-4 の `ThresholdLow` と同じ値（別管理にしない）
+- [ ] (G1)(G2) を psql または BigQuery コンソールで実行して期待どおりに返る
+- [ ] 閾値 0.5 が Day2-4 の `THRESHOLD_LOW` と同じ値（別管理にしない）
 - [ ] 「ナレッジギャップ（低確信）」と「未分類キュー（分類不能）」の違いを 1 文で説明できる
 
 **AI 依頼テンプレ**: なし（指標を自分で定義する範囲）
 
 ---
 
-## 5-3-2. ナレッジギャップ画面（低確信度リスト + 改善候補可視化）[AI]
+## 5-3-2. ナレッジギャップ画面（低確信度リスト + 改善候補可視化）[AI] [FE] [BE]
 
 **目的**
 5-3-1 で定義した (G1)(G2) を admin 向けページ `/t/{slug}/knowledge-gaps` に表示する。
@@ -71,11 +71,11 @@
 
 **AI 依頼テンプレ**
 ```
-Blazor Server（@rendermode InteractiveServer, @attribute [Authorize]）で admin 向けナレッジギャップ画面 Components/Pages/KnowledgeGaps/Index.razor（ルート /t/{Slug}/knowledge-gaps）を書いてほしい。AppDbContext 経由（RLS が app.tenant_id で絞るので WHERE tenant_id は書かない）。AsNoTracking()。
+React（TypeScript、apps/web/）で admin 向けナレッジギャップ画面 apps/web/src/pages/KnowledgeGaps.tsx（ルート /t/:slug/knowledge-gaps）を書いてほしい。データは Node API（apps/api/）の GET /api/knowledge-gaps/:slug/* エンドポイント経由で取得する。Node API 側は BigQuery または Postgres で集計クエリを発行し、JWT の tenant_id で絞る（パラメータ化）。JWT を持たないアクセスは 401 を返す。
 
 2 ブロック（定義は以下に固定。指標を勝手に変えない）:
 1) 低確信度の問い合わせリスト（直近 100 件）:
-   inquiries で confidence_score IS NOT NULL AND confidence_score < ThresholdLow(=0.5)、
+   inquiries で confidence_score IS NOT NULL AND confidence_score < THRESHOLD_LOW(=0.5)、
    matched_knowledge_id で knowledge_entries を、category_id で categories を LEFT JOIN、
    confidence_score 昇順 → created_at 降順。
    列: raw_query / confidence_score / match_strategy / matched_name / category_name / created_at。
@@ -86,16 +86,15 @@ Blazor Server（@rendermode InteractiveServer, @attribute [Authorize]）で admi
    列: name / category_name / low_conf_hits / avg_conf。
 
 注意:
-- ThresholdLow は Day2 の Analytics と同じ定数を共有する（重複定義しない。共通の定数クラス or 設定に寄せる）
-- 複雑な集計は FromSqlRaw（パラメータ化）で良い
+- THRESHOLD_LOW は Day2 の Analytics と同じ定数を共有する（重複定義しない。共通定数モジュールに寄せる）
 - グラフライブラリは足さない。<table> で十分
 ```
 
 **自分の確認ポイント**
-- [ ] `ThresholdLow` が Analytics 画面（Day2-4）と共有されている
+- [ ] `THRESHOLD_LOW` が Analytics 画面（Day2-4）と共有されている
 - [ ] (G2) の `HAVING >= 3` が入っている
 - [ ] マスタ編集への導線がある（改善アクションにつながる）
-- [ ] RLS 任せで `WHERE tenant_id` を書いていない
+- [ ] BigQuery/Postgres クエリに `tenant_id` パラメータが渡っており別テナントが混ざらない
 
 **完了確認**
 - [ ] `/t/{slug}/knowledge-gaps` に低確信リストと改善候補が当該テナント分で出る
@@ -103,47 +102,46 @@ Blazor Server（@rendermode InteractiveServer, @attribute [Authorize]）で admi
 
 ---
 
-## 5-3-3. Keep-alive ping（GitHub Actions cron）[AI]
+## 5-3-3. Keep-alive cron（マネージド Postgres ウォームアップ）[AI] [INFRA]
 
 **目的**
-Supabase Free は 7 日無操作でプロジェクトが一時停止する。GitHub Actions の cron で定期的に軽い DB アクセス（または `/healthz`）を叩き、停止を防ぐ。
+マネージド Postgres は自動停止しない。ただしコールドスタート（接続プールの初期化遅延）対策として、任意でウォームアップ ping を GitHub Actions cron で入れる。必須ではないが入れておくと本番の初回レスポンスが安定する。
 
 **前提確認**
 - [ ] `.github/workflows/ci.yml` の既存ジョブ構成（手本）を確認
-- [ ] 叩く対象（本番 App Service の `/healthz`、または Supabase への軽いクエリ）を決める。**秘匿情報は GitHub Secrets 経由**で、ワークフロー本文にベタ書きしない
+- [ ] 叩く対象（本番 Node API の `/healthz`、またはマネージド Postgres への軽いクエリ）を決める。**秘匿情報は GitHub Secrets 経由**で、ワークフロー本文にベタ書きしない
 
 **AI 依頼テンプレ**
 ```
-GitHub Actions のワークフロー .github/workflows/keepalive.yml を新規作成してほしい。目的は Supabase Free（7 日無操作で一時停止）と Azure App Service F1 の保温。
+GitHub Actions のワークフロー .github/workflows/keepalive.yml を新規作成してほしい。目的はマネージド Postgres のコールドスタート対策（接続プールのウォームアップ）と本番 Node API の死活確認。
 
 要件:
 - on: schedule の cron で 1 日 1〜2 回（例: '17 3 * * *' UTC、日本の昼前後）。workflow_dispatch も付ける（手動実行用）
 - permissions: contents: read のみ
 - ジョブ keepalive:
   1. 本番ヘルスチェック URL を curl で叩く（--fail --silent --show-error、リトライ 3 回）。URL は secrets.KEEPALIVE_HEALTH_URL から読む
-  2. 任意で Supabase への軽量クエリ（SELECT 1）。接続文字列は secrets.SUPABASE_DB_URL_KEEPALIVE（読み取り専用ロール想定）から読む。psql が無ければ skip でよい
+  2. 任意でマネージド Postgres への軽量クエリ（SELECT 1）。接続文字列は secrets.DB_URL_KEEPALIVE（読み取り専用ロール想定）から読む。psql が無ければ skip でよい
 - URL/接続文字列はすべて secrets.* 経由。ワークフロー本文に値をベタ書きしない
-- 失敗時にジョブが赤くなる（停止に気づける）
+- 失敗時にジョブが赤くなる（異常に気づける）
 
 既存 .github/workflows/ci.yml の書式（actions/checkout@v4 等のバージョン、concurrency の付け方）に合わせて。
 ```
 
 **自分の確認ポイント**
-- [ ] cron の頻度が「7 日より十分短い」（1 日 1 回で十分余裕）
 - [ ] URL / 接続文字列が `secrets.*` 経由でベタ書きされていない
 - [ ] `workflow_dispatch` で手動実行できる（初回検証用）
 - [ ] Keep-alive 用ロールは最小権限（`SELECT 1` だけ。`portfolio_app` の鍵を流用しない方が望ましい）
 
 **完了確認**
 - [ ] `workflow_dispatch` で手動実行 → green
-- [ ] GitHub Secrets に `KEEPALIVE_HEALTH_URL`（必要なら `SUPABASE_DB_URL_KEEPALIVE`）を登録した
+- [ ] GitHub Secrets に `KEEPALIVE_HEALTH_URL`（必要なら `DB_URL_KEEPALIVE`）を登録した
 
 ---
 
-## 5-3-4. Sentry 連携（無料枠エラー監視）[AI]
+## 5-3-4. Sentry 連携（無料枠エラー監視）[AI] [INFRA]
 
 **目的**
-backend（ASP.NET Core）の未処理例外を Sentry に送り、無料枠で本番エラーに気づけるようにする。DSN は環境変数 / User Secrets で注入し、`appsettings.json` には書かない。
+Node API（`apps/api/`）の未処理例外を Sentry に送り、無料枠で本番エラーに気づけるようにする。DSN は Secret Manager / 環境変数で注入し、コード・`.env.example` には書かない。
 
 **前提確認**
 - [ ] Sentry の無料プロジェクトを作成し DSN を控えた（`.env.local` / 環境変数へ。コミットしない）
@@ -151,24 +149,24 @@ backend（ASP.NET Core）の未処理例外を Sentry に送り、無料枠で�
 
 **AI 依頼テンプレ**
 ```
-ASP.NET Core 8 + Blazor Server に Sentry（Sentry.AspNetCore）を導入してほしい。
+Node/Express（TypeScript、apps/api/）に Sentry（@sentry/node）を導入してほしい。
 
 要件:
-- builder.WebHost.UseSentry(...) もしくは AddSentry で初期化
-- DSN は IConfiguration "Sentry:Dsn"（実値は環境変数 / User Secrets / Azure App Service の設定で注入）。appsettings.json には DSN を書かない。DSN 未設定なら Sentry を無効化して通常起動する（ローカル開発でクラッシュさせない）
-- 環境名（Environment）と release を設定（release は アセンブリバージョン or 環境変数 SENTRY_RELEASE）
-- TracesSampleRate は無料枠を食い潰さないよう低め（0.1 程度）
-- 個人情報・秘匿情報を送らない: SendDefaultPii=false。BeforeSend で Authorization ヘッダ・X-Widget-Key・JWT・SQL パラメータをスクラブ
+- Sentry.init() を apps/api/src/instrument.ts に切り出し、エントリポイントで最初に import する
+- DSN は環境変数 SENTRY_DSN（実値は Secret Manager / .env.local で注入）。.env.example にはプレースホルダのみ。DSN 未設定なら Sentry を無効化して通常起動する（ローカル開発でクラッシュさせない）
+- 環境名（environment）と release を設定（release は package.json バージョン or 環境変数 SENTRY_RELEASE）
+- tracesSampleRate は無料枠を食い潰さないよう低め（0.1 程度）
+- 個人情報・秘匿情報を送らない: beforeSend で Authorization ヘッダ・X-Widget-Key・JWT・SQL パラメータをスクラブ
 - 匿名ウィジェット経路（/api/widget）の例外も拾うが、利用者のクエリ本文（raw_query）はスクラブ対象に含める（PII の可能性）
 
-appsettings.json / .env.example に DSN の実値を書かないこと。プレースホルダのみ。
+.env.example / コード本文に DSN の実値を書かないこと。プレースホルダのみ。
 ```
 
 **自分の確認ポイント**
-- [ ] DSN が `appsettings.json` / `.env.example` にベタ書きされていない（プレースホルダのみ）
-- [ ] `SendDefaultPii=false`、`BeforeSend` で Authorization / `X-Widget-Key` / `raw_query` をスクラブ
+- [ ] DSN が `.env.example` / コード本文にベタ書きされていない（プレースホルダのみ）
+- [ ] `beforeSend` で Authorization / `X-Widget-Key` / `raw_query` をスクラブ
 - [ ] DSN 未設定でもローカルが落ちずに起動する
-- [ ] `TracesSampleRate` が低め（無料枠保護）
+- [ ] `tracesSampleRate` が低め（無料枠保護）
 
 **完了確認**
 - [ ] わざと例外を投げるテスト用エンドポイントを叩く → Sentry に届く（確認後そのエンドポイントは削除）
@@ -176,7 +174,7 @@ appsettings.json / .env.example に DSN の実値を書かないこと。プレ�
 
 ---
 
-## 5-3-5. 匿名ポリシー込みの RLS E2E 回帰 [自分がケース定義 → AI 実装]
+## 5-3-5. 匿名ポリシー込みの RLS E2E 回帰 [自分がケース定義 → AI 実装] [TEST]
 
 **目的**
 `0004_anon_widget_rls.sql` で `app.widget_tenant_id` 経路を足したことにより、**既存の `app.tenant_id` 分離が壊れていないこと**、かつ**匿名経路自体が越境しないこと**を E2E で証明する。Sprint 1 の `RlsIsolationTests` に匿名ケースを追加する形。
@@ -186,7 +184,7 @@ appsettings.json / .env.example に DSN の実値を書かないこと。プレ�
 
 **前提確認**
 - [ ] Day1〜Day3 のここまで完了
-- [ ] Sprint 1 の `backend/Portfolio.Web.Tests/RlsIsolationTests.cs`（Testcontainers）が green
+- [ ] Sprint 1 の `apps/api/src/__tests__/rlsIsolation.test.ts`（`@testcontainers/postgresql`）が green
 - [ ] `design/04_security_multitenant.md:168-209`（テスト戦略 + 匿名アクセス）を再読
 
 **自分が固定するケースリスト（漏れたらアウト）**
@@ -199,9 +197,9 @@ appsettings.json / .env.example に DSN の実値を書かないこと。プレ�
 
 **AI 依頼テンプレ**
 ```
-backend/Portfolio.Web.Tests/RlsIsolationTests.cs（Testcontainers.PostgreSql, pgvector/pgvector:pg16, init.sql + 0001..0004 を順に流す）に、匿名ウィジェット RLS の回帰ケースを追加してほしい。0004_anon_widget_rls.sql を migration の流し込み順に含めること。
+apps/api/src/__tests__/rlsIsolation.test.ts（@testcontainers/postgresql, postgres:16, init.sql + 0001..0004 を順に流す、Vitest or Jest）に、匿名ウィジェット RLS の回帰ケースを追加してほしい。0004_anon_widget_rls.sql を migration の流し込み順に含めること。ES テナント分離テストも同ファイルに追加する（Elasticsearch テストコンテナを使い、bool.filter に tenant_id 条件が必須であることを確認）。
 
-追加ケース（[Trait("Category","RLS")]）:
+追加ケース（describe('RLS', ...) または同等のグルーピング）:
 1. app.tenant_id=A で B の knowledge_entries/inquiries/unclassified_queue が SELECT/INSERT/UPDATE/DELETE で不可（既存ケースが 0004 適用後も green であることの確認）
 2. app.widget_tenant_id=A で SELECT → A の knowledge_entries のみ、B は 0 行
 3. app.widget_tenant_id=A で B の tenant_id の inquiries/unclassified_queue を INSERT → 例外（WITH CHECK 違反）
@@ -209,13 +207,13 @@ backend/Portfolio.Web.Tests/RlsIsolationTests.cs（Testcontainers.PostgreSql, pg
 5. 両変数未設定で全テーブル 0 行
 6. app.tenant_id=A を立て app.widget_tenant_id 未設定のとき、匿名 SELECT ポリシー経由では 0 行（変数独立の確認）
 
-各ケースを Fact/Theory で。テストヘルパで SET LOCAL を使ったセッションを張る。
+各ケースを it/test で。テストヘルパで SET LOCAL を使ったセッションを張る。
 ```
 
 **自分の確認ポイント**
 - [ ] 6 ケースすべて green
 - [ ] **わざと `0004` の `public_widget_read` の第二引数 `true` を消す（or USING を `true` にする）と一部 red になる**ことを一度確認（green が偶然でない証拠）
-- [ ] CI（`.github/workflows/ci.yml`）の RLS テスト実行ステップ / ジョブにこのファイルが含まれる
+- [ ] CI（`.github/workflows/ci.yml`）の RLS テスト実行ステップ / ジョブに `apps/api/src/__tests__/rlsIsolation.test.ts` が含まれる
 
 **完了確認**
 - [ ] 6 ケース green + 「ポリシー壊すと red」を一度経験済み
@@ -226,16 +224,16 @@ backend/Portfolio.Web.Tests/RlsIsolationTests.cs（Testcontainers.PostgreSql, pg
 ## Day 3 終了チェックリスト
 
 - [ ] `/t/{slug}/knowledge-gaps` に低確信リスト + 改善候補（`HAVING >= 3`）が出て、マスタ編集に飛べる
-- [ ] 低確信閾値が Analytics（Day2-4）と一箇所で共有されている
-- [ ] `keepalive.yml` が `workflow_dispatch` で green、cron が 7 日より十分短い、URL/接続情報は Secrets 経由
+- [ ] 低確信閾値が Analytics（Day2-4）と一箇所で共有されている（`THRESHOLD_LOW` 定数）
+- [ ] `keepalive.yml` が `workflow_dispatch` で green、URL/接続情報は Secrets 経由
 - [ ] Sentry に例外が届き、JWT / 鍵 / `raw_query` 等がスクラブされている、DSN はベタ書きされていない
-- [ ] RLS E2E 回帰 6 ケース green、ポリシーを壊すと red になることを確認、既存ケースも非回帰
+- [ ] RLS E2E 回帰 6 ケース green（`@testcontainers/postgresql` + Vitest/Jest）、ポリシーを壊すと red になることを確認、既存ケースも非回帰
 
 ## Sprint 5 完走後の状態
 
-- 利用者サイトに `<script>` 一行でチャットボットが埋め込め、匿名アクセスは `app.widget_tenant_id` 限定 RLS + 公開鍵 + CORS/Origin + レートリミットで多層に守られている
-- admin が利用ログ分析とナレッジギャップを数字で見られ、改善アクション（example_queries の追加）に繋げられる
-- Supabase Free の停止対策（Keep-alive）と本番エラー監視（Sentry）が入り、無料枠で「落ちない・気づける」運用になった
-- 匿名ポリシー追加後も既存テナント分離が壊れていないことが E2E で保証されている
+- 利用者サイトに `<script>` 一行でチャットボットが埋め込め（TypeScript バンドル・shadow DOM）、匿名アクセスは `app.widget_tenant_id` 限定 RLS + 公開鍵 + CORS/Origin + レートリミット（DB ベース）で多層に守られている
+- admin が利用ログ分析（BigQuery 集計・React 画面）とナレッジギャップを数字で見られ、改善アクション（example_queries の追加）に繋げられる
+- マネージド Postgres コールドスタート対策（Keep-alive cron）と本番エラー監視（Sentry for Node API）が入り、無料枠で「遅延なく起動・気づける」運用になった
+- 匿名ポリシー追加後も既存テナント分離が壊れていないことが E2E で保証されている（ES テナント分離テストも含む）
 
 次は Phase 2（Re-ranker / HyDE による検索強化、非構造文書 RAG、会話ログ管理）に着手。

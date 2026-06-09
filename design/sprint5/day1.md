@@ -4,11 +4,11 @@
 > 完了時の状態: 公開鍵を持つ匿名リクエストだけが、当該テナントの `knowledge_entries` を読み・`inquiries`/`unclassified_queue` に書ける。`embed.js` が CORS/Origin 制限付きで配信され、匿名チャットの最小 API が叩ける
 > 推定所要: 6〜8 時間
 
-> 前提: Sprint 1〜4 完了。`app.tenant_id` 方式の RLS（`0003_rls_policies.sql`）・`portfolio_app`（NOBYPASSRLS）・`DbConnectionInterceptor`・分類/検索/未分類登録サービスが動いている。本日はそれらの**隣に別の鍵束**を足す。
+> 前提: Sprint 1〜4 完了。`app.tenant_id` 方式の RLS（`0003_rls_policies.sql`）・`portfolio_app`（NOBYPASSRLS）・Node ミドルウェア（`TenantResolutionMiddleware`、トランザクション内で `SET LOCAL app.tenant_id` を発行）・分類/検索/未分類登録サービスが動いている。本日はそれらの**隣に別の鍵束**を足す。
 
 ---
 
-## 5-1-1. `0004_anon_widget_rls.sql`（匿名用限定 RLS のお手本）[自分]
+## 5-1-1. `0004_anon_widget_rls.sql`（匿名用限定 RLS のお手本）[自分] [INFRA]
 
 **目的**
 ログイン経路（`app.tenant_id`）とは独立した、匿名ウィジェット専用の限定ポリシーを **1 テーブル分だけ**自分の手で書く。`knowledge_entries` を「読みだけ」許す型を確定し、残り 2 テーブルは 5-1-2 で AI に複製させる。面接で「なぜ匿名を別セッション変数にしたか」を語れる状態にする。
@@ -19,7 +19,7 @@
 **前提確認**
 - [ ] `design/04_security_multitenant.md:185-209`（匿名アクセス・別変数方式）を読んだ
 - [ ] 既存 migration の最大番号が `0003_rls_policies.sql` であることを確認（`ls infra/db/migrations/`）。本ファイルは `0004` を採番する
-- [ ] `tenant_public_keys` テーブルが `0001_schema.sql:181-190` に既にあること、列が `key_hash` / `allowed_origins` / `rate_limit_rpm` であることを確認
+- [ ] `tenant_public_keys` テーブルが `0001_schema.sql:181-190` に既にあること、列が `key_hash` / `allowed_origins` / `rate_limit_rpm` であることを確認（マネージド Postgres に直接 psql で接続して確認）
 
 **手順**
 1. 新規ファイル `infra/db/migrations/0004_anon_widget_rls.sql` を作成
@@ -40,7 +40,7 @@
      --   - uuid へキャストする
      ;
    ```
-3. owner ロール（`$SUPABASE_DB_URL_OWNER`）で `psql -f` して流す
+3. owner ロール（`$DB_URL_OWNER`）で `psql -f` して流す
 4. 手動検証（5-1-1 の範囲では `knowledge_entries` だけ）。次の 3 点を確認する psql を自分で組み立てる:
    - 匿名変数で A を立てる（`BEGIN; SET LOCAL app.widget_tenant_id = '<tenant-a-uuid>'; ...; ROLLBACK;`）→ A のナレッジだけ見える
    - 何も立てずに `count(*)` → 0 行（フェイルセーフ）
@@ -64,12 +64,13 @@
 **詰まったら**
 - 未設定で全件返る → `portfolio_app` が NOBYPASSRLS か（`SELECT rolbypassrls FROM pg_roles WHERE rolname='portfolio_app'` が `f`）、`FORCE ROW LEVEL SECURITY` が `knowledge_entries` に効いているか
 - 既存ログインユーザーの SELECT が 0 件になった → 新ポリシーが `FOR SELECT` で既存 `tenant_isolation` を上書きしていないか。ポリシーは OR で結合されるので両方残っているか `\d` で確認
+- マネージド Postgres への psql 接続が失敗する → 接続文字列（`DB_URL_OWNER`）が Secret Manager から正しく取れているか確認
 
 **AI 依頼テンプレ**: なし（自分で書く範囲）
 
 ---
 
-## 5-1-2. 残り 2 テーブルへ匿名ポリシー展開（`inquiries` / `unclassified_queue`）[AI]
+## 5-1-2. 残り 2 テーブルへ匿名ポリシー展開（`inquiries` / `unclassified_queue`）[AI] [INFRA]
 
 **目的**
 5-1-1 で確定した型を `inquiries`（SELECT+INSERT）と `unclassified_queue`（INSERT のみ）に複製する。型は自分が握ったので複製は AI で十分。
@@ -107,72 +108,70 @@ DROP POLICY IF EXISTS を各 CREATE の前に置く。
 
 ---
 
-## 5-1-3. 公開鍵検証 + widget セッション変数発行ミドルウェア [自分]
+## 5-1-3. 公開鍵検証 + widget セッション変数発行ミドルウェア [自分] [BE]
 
 **目的**
-リクエストヘッダの公開鍵を `tenant_public_keys.key_hash` と照合し、合致したテナントに対して `SET LOCAL app.widget_tenant_id = '<uuid>'` を立てる。**ここが匿名経路の認可の単一ポイント**。ログイン経路の `TenantResolutionMiddleware` とは別物として独立させる。
+リクエストヘッダの公開鍵を `tenant_public_keys.key_hash` と照合し、合致したテナントに対してリクエスト単位トランザクション内で `SET LOCAL app.widget_tenant_id = '<uuid>'` を立てる。**ここが匿名経路の認可の単一ポイント**。ログイン経路の `TenantResolutionMiddleware` とは別物として独立させる。
 
 **自分で書く理由**
-公開鍵の照合と「どのテナントの匿名変数を立てるか」の決定は、誤ると越境につながる認可の中核。`DbConnectionInterceptor` が `app.tenant_id` を立てる経路と混線させない設計判断も含め、面接で語る要所。
+公開鍵の照合と「どのテナントの匿名変数を立てるか」の決定は、誤ると越境につながる認可の中核。ログイン経路の `TenantResolutionMiddleware`（`app.tenant_id` を立てる）と混線させない設計判断も含め、面接で語る要所。
 
 **前提確認**
 - [ ] 5-1-2 完了
-- [ ] `Data/Entities/TenantPublicKey.cs`（`KeyHash` / `AllowedOrigins` / `RateLimitRpm`）を確認
-- [ ] 既存の `DbConnectionInterceptor`（`app.tenant_id` を `HttpContext.Items["TenantId"]` から立てる）の動きを再確認
+- [ ] `apps/api/src/types/tenantPublicKey.ts`（`keyHash` / `allowedOrigins` / `rateLimitRpm`）を確認
+- [ ] 既存の `TenantResolutionMiddleware`（`app.tenant_id` を JWT クレームから `SET LOCAL` で立てる）の動きを再確認
 
 **手順**
-1. 新規 `backend/Portfolio.Web/Middleware/WidgetAuthMiddleware.cs`。シグネチャと分岐の骨格だけ示す。中の認可ロジックは自分で実装する:
-   ```csharp
-   // 匿名ウィジェット経路専用。/api/widget/... のみ対象。
+1. 新規 `apps/api/src/middleware/widgetAuth.ts`。シグネチャと分岐の骨格だけ示す。中の認可ロジックは自分で実装する:
+   ```typescript
+   // 匿名ウィジェット経路専用。/api/widget/* のみ対象。
    // ログイン経路の TenantResolutionMiddleware とは独立に動く。
-   public sealed class WidgetAuthMiddleware(RequestDelegate next)
-   {
-       public async Task InvokeAsync(HttpContext ctx, OwnerDbContext owner)
-       {
-           // ここを自分で実装: パスが /api/widget 配下でなければ素通り（await next; return）
-           //   ＝ 既存ログイン経路には一切触らない
+   export async function widgetAuthMiddleware(
+     req: Request, res: Response, next: NextFunction
+   ): Promise<void> {
+     // ここを自分で実装: パスが /api/widget 配下でなければ素通り（next(); return）
+     //   ＝ 既存ログイン経路には一切触らない
 
-           // ここを自分で実装: 公開鍵をヘッダ X-Widget-Key から取得する
-           //   - クエリ文字列からは読まない（ログ流出防止）
-           //   - 空なら 401 を返して return
+     // ここを自分で実装: 公開鍵をヘッダ X-Widget-Key から取得する
+     //   - クエリ文字列からは読まない（ログ流出防止）
+     //   - 空なら res.status(401).end() して return
 
-           // ここを自分で実装: 提示値をハッシュ化し tenant_public_keys.key_hash と照合
-           //   - 鍵はハッシュで保管されている前提（平文比較しない）
-           //   - 引くのは owner 接続（OwnerDbContext）。理由: この時点では
-           //     まだどのテナントか未確定なので app 接続だと RLS で空集合になる
-           //   - AsNoTracking で読む / ctx.RequestAborted を渡す
-           //   - 見つからなければ 401 を返して return
+     // ここを自分で実装: 提示値をハッシュ化し tenant_public_keys.key_hash と照合
+     //   - 鍵はハッシュで保管されている前提（平文比較しない）
+     //   - 引くのは owner 接続（RLS が無効な接続ユーザー）。理由: この時点では
+     //     まだどのテナントか未確定なので app 接続だと RLS で空集合になる
+     //   - 見つからなければ res.status(401).end() して return
 
-           // ここを自分で実装: 確定したテナントを匿名コンテキストとして HttpContext.Items に格納
-           //   - キーは app.tenant_id 用の Items["TenantId"] とは別物にする（混線防止）
-           //   - Items["WidgetTenantId"] にテナント id、Items["WidgetKey"] に鍵オブジェクト
-           //     （後者は 5-1-4 の Origin / 5-2-3 の rate limit で使う）
-           //   - 最後に await next(ctx)
-       }
+     // ここを自分で実装: 確定したテナントを匿名コンテキストとして req に格納
+     //   - キーはログイン経路の req.tenantId とは別物にする（混線防止）
+     //   - req.widgetTenantId にテナント id、req.widgetKey に鍵オブジェクト
+     //     （後者は 5-1-4 の Origin / 5-2-3 の rate limit で使う）
+     //   - リクエスト単位トランザクション内で SET LOCAL app.widget_tenant_id を発行
+     //   - 最後に next()
    }
    ```
-2. `WidgetKeyHasher`（SHA-256 等。鍵は十分なエントロピーを持つランダム文字列なので salt 不要、固定ハッシュで OK。**平文鍵は DB に残さない**）を `backend/Portfolio.Web/Services/WidgetKeyHasher.cs` に追加。`Hash(string) -> string` の 1 メソッドだけ。中身は自分で実装
-3. `DbConnectionInterceptor`（Sprint 1 で作成済み）に分岐を足す。`Items["WidgetTenantId"]` があれば `app.tenant_id` ではなく `app.widget_tenant_id` を立てる:
-   - 既存: `Items["TenantId"]` → `SET LOCAL app.tenant_id`
-   - 追加: `Items["WidgetTenantId"]` → `SET LOCAL app.widget_tenant_id`
+2. `widgetKeyHasher`（SHA-256 等。鍵は十分なエントロピーを持つランダム文字列なので salt 不要、固定ハッシュで OK。**平文鍵は DB に残さない**）を `apps/api/src/services/widgetKeyHasher.ts` に追加。`hash(key: string): string` の 1 関数だけ。中身は自分で実装
+3. トランザクション管理ヘルパ（Sprint 1 で作成済み）に分岐を足す。`req.widgetTenantId` があれば `app.tenant_id` ではなく `app.widget_tenant_id` を `SET LOCAL` で発行する:
+   - 既存: `req.tenantId` → `SET LOCAL app.tenant_id`
+   - 追加: `req.widgetTenantId` → `SET LOCAL app.widget_tenant_id`
    - 両方同時には立てない（ログイン経路と匿名経路は排他）。この排他をどう書くか自分で判断
-4. `Program.cs` に `app.UseMiddleware<WidgetAuthMiddleware>()` を登録する。位置は `UseAuthentication`/`UseAuthorization` の後、`MapRazorComponents` の前（匿名なので `[Authorize]` は通さない）
+4. `apps/api/src/app.ts`（または `server.ts`）に `widgetAuthMiddleware` を登録する。位置は `authMiddleware`/`tenantResolutionMiddleware` の後、`/api/widget` ルートハンドラの前（匿名なので JWT 検証は通さない）
 
 **完了確認** — 単体テスト 4 ケース（テストは 5-1-5 の AI 依頼に同梱可）:
 - [ ] `X-Widget-Key` なし → 401
 - [ ] 存在しない鍵 → 401
-- [ ] 有効な鍵 → 通過、`Items["WidgetTenantId"]` に当該テナント
+- [ ] 有効な鍵 → 通過、`req.widgetTenantId` に当該テナント
 - [ ] `/api/widget` 以外のパス → ミドルウェアは素通り（既存ログイン経路に影響なし）
 
 **詰まったら**
-- `tenant_public_keys` が引けない（0 件）→ owner 接続を使っているか。app 接続だと RLS で空集合になる
-- 既存ログイン経路が壊れた → `app.tenant_id` と `app.widget_tenant_id` を同時に立てていないか。インターセプタで排他にする
+- `tenant_public_keys` が引けない（0 件）→ owner 接続（RLS なし）を使っているか。app 接続だと RLS で空集合になる
+- 既存ログイン経路が壊れた → `app.tenant_id` と `app.widget_tenant_id` を同時に立てていないか。トランザクションヘルパで排他にする
 
 **AI 依頼テンプレ**: ミドルウェア本体・ハッシャは自分。テストは 5-1-5 にまとめて依頼。
 
 ---
 
-## 5-1-4. `embed.js` 配信エンドポイント + CORS/Origin チェック [自分（最初の 1 個）]
+## 5-1-4. `embed.js` 配信エンドポイント + CORS/Origin チェック [自分（最初の 1 個）] [BE] [FE]
 
 **目的**
 利用者サイトが `<script src="https://.../api/widget/embed.js?key=...">` で読み込む配信エンドポイントを作り、`tenant_public_keys.allowed_origins` に基づく CORS / Origin 制限をかける。配信レスポンスと API レスポンスの両方に正しい `Access-Control-Allow-Origin` を返す型をここで確定する。
@@ -183,35 +182,30 @@ CORS / Origin 照合は「どのサイトからの埋め込みを許すか」の
 **前提確認**
 - [ ] 5-1-3 完了
 - [ ] `design/08_features.md:79-87`（CORS/Origin チェック・shadow DOM の位置づけ）を読んだ
-- [ ] `Program.cs` の minimal API でエンドポイントを足せる構成を確認
+- [ ] `apps/api/src/routes/widget.ts`（または `app.ts`）にルートを追加できる構成を確認
 
 **手順**
-1. 配信用に `Program.cs`（または `Endpoints/WidgetEndpoints.cs`）へ minimal API を足す。骨格だけ示す。鍵照合と Origin 判定の中身は自分で書く:
-   ```csharp
+1. 配信用に `apps/api/src/routes/widget.ts`（または `apps/api/src/routes/widgetEmbed.ts`）へエンドポイントを足す。骨格だけ示す。鍵照合と Origin 判定の中身は自分で書く:
+   ```typescript
    // GET /api/widget/embed.js?key=<public-key>
    // Origin が allowed_origins に含まれるときだけ CORS ヘッダを返す。
-   var widget = app.MapGroup("/api/widget");
+   router.get('/embed.js', async (req: Request, res: Response) => {
+     // ここを自分で実装: クエリ ?key= を読み、ハッシュ化して tenant_public_keys と照合
+     //   - owner 接続（RLS なし）で SELECT。理由は 5-1-3 と同じ
+     //   - 見つからなければ res.status(401).end()
 
-   widget.MapGet("/embed.js", async (HttpContext ctx, OwnerDbContext owner) =>
-   {
-       // ここを自分で実装: クエリ ?key= を読み、ハッシュ化して tenant_public_keys と照合
-       //   - owner 接続 / AsNoTracking（理由は 5-1-3 と同じ）
-       //   - 見つからなければ Results.Unauthorized()
+     // ここを自分で実装: リクエストの Origin ヘッダを取り、isOriginAllowed が真のときだけ
+     //   Access-Control-Allow-Origin に「その Origin をエコーバック」する
+     //   - ワイルドカード * は絶対に返さない（公開鍵漏洩時に任意サイトから叩かれる）
 
-       // ここを自分で実装: リクエストの Origin ヘッダを取り、IsOriginAllowed が真のときだけ
-       //   Access-Control-Allow-Origin に「その Origin をエコーバック」する
-       //   - ワイルドカード * は絶対に返さない（公開鍵漏洩時に任意サイトから叩かれる）
-
-       // ここを自分で実装: ContentType を application/javascript にして
-       //   embed.js 本体（wwwroot/widget/embed.js、本体は 5-2-2 で AI が作る）を返す
-       return ...;
+     // ここを自分で実装: Content-Type を application/javascript にして
+     //   embed.js 本体（apps/web/dist/embed.js、本体は 5-2-2 で AI が作る）を返す
    });
    ```
-2. `IsOriginAllowed(string origin, string[] allowed)` を自分で書く。方針: **完全一致**（`https://example.com`）のみ許可、ワイルドカードは許さない。スキーム/ポート込みで一致を判定すること（大小無視で良いかも自分で判断）
-   ```csharp
-   static bool IsOriginAllowed(string origin, string[] allowed)
-   {
-       // ここを自分で実装: allowed のいずれかと origin が完全一致するか
+2. `isOriginAllowed(origin: string, allowed: string[]): boolean` を自分で書く。方針: **完全一致**（`https://example.com`）のみ許可、ワイルドカードは許さない。スキーム/ポート込みで一致を判定すること（大小無視で良いかも自分で判断）
+   ```typescript
+   function isOriginAllowed(origin: string, allowed: string[]): boolean {
+     // ここを自分で実装: allowed のいずれかと origin が完全一致するか
    }
    ```
 3. プリフライト（`OPTIONS /api/widget/chat` 等）への応答を共通化する。許可 Origin のみ `Access-Control-Allow-Methods` / `Access-Control-Allow-Headers: X-Widget-Key, Content-Type` を返す。許可外は CORS ヘッダを付けない（ブラウザが弾く）。実装は自分で組み立てる
@@ -224,13 +218,13 @@ CORS / Origin 照合は「どのサイトからの埋め込みを許すか」の
 
 **詰まったら**
 - ブラウザで CORS エラー → `Origin` ヘッダのスキーム/ポート込みで完全一致しているか（`https://example.com` と `https://example.com:443` は別物）。`allowed_origins` の登録値を見直す
-- プリフライトが 404 → `MapMethods(..., "OPTIONS", ...)` を別途定義する必要があるか確認
+- プリフライトが 404 → Express の `options` ルートまたは `router.options(...)` を別途定義する必要があるか確認
 
-**AI 依頼テンプレ**: 配信エンドポイントと `IsOriginAllowed` は自分。embed.js 本体は 5-2-2 で AI。
+**AI 依頼テンプレ**: 配信エンドポイントと `isOriginAllowed` は自分。embed.js 本体は 5-2-2 で AI。
 
 ---
 
-## 5-1-5. 匿名チャット用最小 API の結線 [AI]
+## 5-1-5. 匿名チャット用最小 API の結線 [AI] [BE]
 
 **目的**
 既存の分類/検索/未分類登録サービス（Sprint 2〜4 で実装済み）を、匿名コンテキスト（`Items["WidgetTenantId"]`）から呼ぶ最小エンドポイントを作る。新しい検索ロジックは書かない、**結線だけ**。
@@ -241,21 +235,21 @@ CORS / Origin 照合は「どのサイトからの埋め込みを許すか」の
 
 **AI 依頼テンプレ**
 ```
-ASP.NET Core 8 minimal API で、匿名ウィジェット用の最小エンドポイントを backend/Portfolio.Web/Endpoints/WidgetEndpoints.cs に追加してほしい。
-WidgetAuthMiddleware が HttpContext.Items["WidgetTenantId"] に Guid を入れ、DbConnectionInterceptor が SET LOCAL app.widget_tenant_id を立てる前提（既存）。新しい検索ロジックは書かず、既存サービスを呼ぶだけ。
+Node/Express（TypeScript）で、匿名ウィジェット用の最小エンドポイントを apps/api/src/routes/widget.ts に追加してほしい。
+widgetAuthMiddleware が req.widgetTenantId（string/UUID）と req.widgetKey を設定し、トランザクション内で SET LOCAL app.widget_tenant_id を立てる前提（既存）。新しい検索ロジックは書かず、既存サービスを呼ぶだけ。
 
-エンドポイント（すべて MapGroup("/api/widget") 配下、[Authorize] は付けない）:
+エンドポイント（すべて /api/widget 配下、JWT 認証は付けない）:
 1. GET  /categories         → 当該テナントの categories を返す（id/code/name/emoji/sort_order）
 2. POST /classify           → body { query, categoryId? } を既存の分類サービスに渡し、候補 + match_strategy + confidence_score を返す
 3. POST /inquiries          → 確定した inquiry を INSERT（status/match_strategy/confidence_score/matched_knowledge_id を記録）
 4. POST /unclassified       → 「新規問題として」入力を unclassified_queue に INSERT
 
 注意:
-- tenant_id は body から受け取らず、Items["WidgetTenantId"] から取る（クライアント由来の tenant id は信頼しない）
-- 例外時に内部情報を漏らさない（ProblemDetails で最小限）
+- tenant_id は body から受け取らず、req.widgetTenantId から取る（クライアント由来の tenant id は信頼しない）
+- 例外時に内部情報を漏らさない（{ error: 'internal_error' } 程度の最小レスポンス）
 - レスポンスはマスタ管理用の admin 専用列（auto_resolution の編集権限など）を含めない、表示に必要な分だけ
 
-あわせて WidgetAuthMiddleware の単体テスト（401 系 3 ケース + 通過 1 ケース）を Portfolio.Web.Tests に書いて。
+あわせて widgetAuthMiddleware の単体テスト（401 系 3 ケース + 通過 1 ケース）を apps/api/src/__tests__/widgetAuth.test.ts に書いて（Vitest or Jest）。
 ```
 
 **自分の確認ポイント**
@@ -274,7 +268,7 @@ WidgetAuthMiddleware が HttpContext.Items["WidgetTenantId"] に Guid を入れ�
 
 - [ ] `0004_anon_widget_rls.sql` が 3 テーブル（`knowledge_entries` SELECT / `inquiries` SELECT+INSERT / `unclassified_queue` INSERT）に `app.widget_tenant_id` ポリシーを当てている
 - [ ] 匿名変数未設定で全テーブル空集合（フェイルセーフ）
-- [ ] `WidgetAuthMiddleware` が公開鍵を照合し `Items["WidgetTenantId"]` を立て、インターセプタが `app.widget_tenant_id` を発行する
+- [ ] `widgetAuthMiddleware`（Node）が公開鍵を照合し `req.widgetTenantId` を立て、トランザクションヘルパが `SET LOCAL app.widget_tenant_id` を発行する
 - [ ] `/api/widget/embed.js` が `allowed_origins` 完全一致のときだけ CORS ヘッダを返す（`*` ではない）
 - [ ] 匿名 API 4 本（categories/classify/inquiries/unclassified）が `X-Widget-Key` 経由で叩ける
 - [ ] 既存ログイン経路（`app.tenant_id`）が壊れていない
@@ -282,5 +276,5 @@ WidgetAuthMiddleware が HttpContext.Items["WidgetTenantId"] に Guid を入れ�
 ## Day 2 への引き継ぎメモ（自分宛て）
 
 - 匿名変数名は `app.widget_tenant_id`、ヘッダは `X-Widget-Key` で統一（5-2-2/5-2-3 の AI 依頼に明示）
-- `tenant_public_keys.rate_limit_rpm` は Day2-3 のレートリミットで使う（鍵オブジェクトを `Items["WidgetKey"]` に積んである）
-- embed.js は `wwwroot/widget/embed.js` を配信する構成にした（5-2-2 でここに本体を置く）
+- `tenant_public_keys.rate_limit_rpm` は Day2-3 のレートリミットで使う（鍵オブジェクトを `req.widgetKey` に積んである）
+- embed.js は `apps/web/dist/embed.js`（TypeScript バンドル）を配信する構成にした（5-2-2 でここに本体を置く）

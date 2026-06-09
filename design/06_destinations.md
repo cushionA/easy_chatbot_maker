@@ -7,41 +7,45 @@
 
 ## ITicketDestination インターフェース
 
-```csharp
-public interface ITicketDestination
-{
-    string Kind { get; }   // "redmine" / "github_issues" 等
+```typescript
+interface ITicketDestination {
+  readonly kind: string;   // "redmine" / "github_issues" 等
 
-    Task<TestConnectionResult> TestConnectionAsync(
-        DestinationConfig config,
-        CancellationToken ct);
+  testConnection(
+    config: DestinationConfig
+  ): Promise<TestConnectionResult>;
 
-    Task<TicketSubmitResult> SubmitAsync(
-        Ticket ticket,
-        DestinationConfig config,
-        CancellationToken ct);
+  submit(
+    ticket: Ticket,
+    config: DestinationConfig
+  ): Promise<TicketSubmitResult>;
 }
 
-public record DestinationConfig(
-    JsonElement PublicConfig,    // URL, project_id 等
-    string SecretValue,          // Vault から復号した API キー
-    JsonElement FieldMapping     // ticket_priority 等の変換
-);
+interface DestinationConfig {
+  publicConfig: Record<string, unknown>;  // URL, project_id 等
+  secretValue: string;                     // Secret Manager から取得した API キー
+  fieldMapping: Record<string, unknown>;   // ticket_priority 等の変換
+}
 
-public record Ticket(
-    string Title,
-    string BodyMarkdown,
-    string TicketPriority,        // low/normal/high/urgent
-    Guid TenantId,
-    Guid KnowledgeEntryId
-);
+interface Ticket {
+  title: string;
+  bodyMarkdown: string;
+  ticketPriority: string;        // low/normal/high/urgent
+  tenantId: string;              // uuid
+  knowledgeEntryId: string;      // uuid
+}
 
-public record TicketSubmitResult(
-    bool Success,
-    string? ExternalId,
-    string? ExternalUrl,
-    string? ErrorMessage
-);
+interface TicketSubmitResult {
+  success: boolean;
+  externalId?: string;
+  externalUrl?: string;
+  errorMessage?: string;
+}
+
+interface TestConnectionResult {
+  ok: boolean;
+  reason?: string;   // 失敗時: APIキー無効 / URL到達不可 / 権限不足 等
+}
 ```
 
 ## MVP 対応する起票先
@@ -110,7 +114,7 @@ public record TicketSubmitResult(
 
 - **タイトル**：`knowledge_entries.name`（問題名）+ 必要なら短い要約
 - **本文（Markdown）**：動的フォームで収集した値を Markdown 化
-- **既存 Streamlit 版 `build_description` の C# 移植**で実装
+- **既存 Streamlit 版 `build_description` の TypeScript 移植**で実装
 
 本文フォーマット例：
 
@@ -134,7 +138,7 @@ public record TicketSubmitResult(
 [07_data_strategy.md](07_data_strategy.md) と連動する。
 
 - 起票本文は Redmine / GitHub 側が真の保管先
-- うちの `inquiries` テーブルは「**チケットID + URL + 分類結果 + Embedding**」のみ
+- うちの `inquiries` テーブルは「**チケットID + URL + 分類結果（メタ）**」のみ（Embedding/検索文書は Elasticsearch 側に保持）
 - 容量 1 レコード数百バイト
 
 この設計により：
@@ -167,36 +171,36 @@ public record TicketSubmitResult(
 
 destination 登録/編集時：
 
-- 「接続テスト」ボタン → `TestConnectionAsync` 呼出
+- 「接続テスト」ボタン → `testConnection` 呼出
 - 結果を画面表示（成功 / API キー無効 / URL 到達不可 / 権限不足）
 - 失敗時は登録させない（不正設定の混入を防ぐ）
 
 ## API キーの保管
 
-- `destinations.secret_vault_id` で Supabase Vault レコードを参照
-- Vault は pgsodium で暗号化保管
-- 復号は admin role のみ
+- `destinations.secret_ref` で Secret Manager（AWS/GCP）のシークレットを参照
+- シークレットは Secret Manager 側で暗号化保管
+- 復号・取得はアプリ層が IAM 権限で実行
 - 詳細：[04_security_multitenant.md](04_security_multitenant.md)
 
-## Adapter 実装ファイル構成（C#）
+## Adapter 実装ファイル構成
 
 ```
-src/Chatbot.Destinations/
-├── ITicketDestination.cs
-├── Models/
-│   ├── DestinationConfig.cs
-│   ├── Ticket.cs
-│   └── TicketSubmitResult.cs
-├── Adapters/
-│   ├── RedmineDestination.cs
-│   └── GitHubIssuesDestination.cs
-└── DestinationRegistry.cs    -- kind 文字列 → 実装の解決
+src/destinations/
+├── ticket-destination.ts
+├── models/
+│   ├── destination-config.ts
+│   ├── ticket.ts
+│   └── ticket-submit-result.ts
+├── adapters/
+│   ├── redmine-destination.ts
+│   └── github-issues-destination.ts
+└── destination-registry.ts    -- kind 文字列 → 実装の解決
 ```
 
-`DestinationRegistry` で DI 登録、起票時にテナント設定の `kind` から実装を解決。
+`destination-registry` の DI/ファクトリ（NestJS/Express）で kind 文字列を実装に解決し、起票時にテナント設定の `kind` から実装を解決する。
 
 ## 面接で語る点
 
 > 「組織ごとに使う起票システム（Redmine, GitHub Issues, Jira 等）が異なるため、ITicketDestination インターフェースと Adapter パターンで抽象化した。フィールドマッピング（優先度の変換等）は JSONB で柔軟に持ち、テナント側で設定可能にした。MVP は Redmine と GitHub Issues の2実装、他は追加可能な拡張点として残した」
 
-> 「API キー等の秘匿情報は Supabase Vault で暗号化保管、テナント間は Row Level Security で隔離。起票本文は外部チケットシステム側が真の保管先で、当システムはメタデータのみを保持する設計（データ複製を避ける）」
+> 「API キー等の秘匿情報は Secret Manager に暗号化保管し DB には参照(secret_ref)だけを持つ、テナント間は Row Level Security で隔離。起票本文は外部チケットシステム側が真の保管先で、当システムはメタデータのみを保持する設計（データ複製を避ける）」

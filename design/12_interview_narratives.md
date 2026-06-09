@@ -4,7 +4,7 @@
 
 ## 全体ストーリー
 
-> 「Streamlit で PoC を作り、Embedding + LLM フォールバック分類戦略の妥当性を検証した後、ASP.NET Core + Blazor Server に載せ替えて本格 Web 版に発展させた。
+> 「Streamlit で PoC を作り、Embedding + LLM フォールバック分類戦略の妥当性を検証した後、**Node.js + TypeScript（React フロント + Node API）に載せ替えて本格 Web 版に発展**させた。
 >
 > マルチテナント対応、ハイブリッド検索（BM25 + Embedding）、Adapter パターンによる複数起票先対応、埋め込みウィジェット、無料運用設計を加えた。
 >
@@ -24,16 +24,15 @@
 
 > 「テナント分離は Schema-per-tenant ではなく Row Level Security（RLS）一択。Schema-per-tenant は無料枠で 1000 テナント管理が不可能で、RLS は Postgres 標準サポートで運用シンプル。
 >
-> 全テーブルに `tenant_id` 列を持ち、RLS ポリシーで `current_setting('app.tenant_id')` を参照して自動フィルタする方式にした。**Supabase 標準は `auth.uid()` ベースだが、これは PostgREST 経由で JWT クレームを Postgres に渡す前提**で、ASP.NET Core から直接接続する構成では機能しない。そこで認可（JWT → テナント解決）はアプリ層で完結させ、確定した `tenant_id` を EF Core の `DbConnectionInterceptor` で `SET LOCAL` してから RLS が参照する設計に倒した。
+> 全テーブルに `tenant_id` 列を持ち、RLS ポリシーで `current_setting('app.tenant_id', true)` を参照して自動フィルタする方式にした。**DB 側で JWT クレームを参照するパターンは REST ゲートウェイ前提**で、Node API が直接接続する構成では機能しない。そこで認可（JWT → テナント解決）はアプリ層で完結させ、確定した `tenant_id` を **Node のデータ層がリクエスト単位トランザクション先頭で `SET LOCAL`** してから RLS が参照する設計に倒した。
 >
-> さらに **スキーマ所有者ロールは暗黙の `BYPASSRLS` を持つ罠**があるため、マイグレーション用 `portfolio_owner` とアプリ接続用 `portfolio_app`（`NOBYPASSRLS`）を分離。**RLS ポリシーは書き間違うと漏洩につながるため、テナント間で他テナントのデータが SELECT/INSERT/UPDATE/DELETE のいずれでも見えないことを E2E で明示テストし、加えてセッション変数未設定時に空集合になるフェイルセーフ検証も入れた**。」
+> さらに **スキーマ所有者ロールは暗黙の `BYPASSRLS` を持つ罠**があるため、マイグレーション用の `portfolio_owner` とアプリ接続用の `portfolio_app`（`NOBYPASSRLS`）を分離。**RLS ポリシーは書き間違うと漏洩につながるため、テナント間で他テナントのデータが SELECT/INSERT/UPDATE/DELETE のいずれでも見えないことを E2E で明示テストし、加えてセッション変数未設定時に空集合になるフェイルセーフ検証も入れた**。」
 
 ### 3. ハイブリッド検索
 
 > 「Embedding 単独は固有名詞・型番・エラーコードに弱い。
-> Postgres の `tsvector`（BM25 ベース）と pgvector のコサイン類似度を **RRF（Reciprocal Rank Fusion）** で結合するハイブリッド検索を採用した。
-> さらに過去マッチ回数 `match_count` を `log(1 + n)` で重み付けして検索ランキングに混ぜることで、組織が使うほど検索品質が向上する仕組みにした。
-> 追加インフラなしに（Postgres 単独で）実現できる構成。」
+> 専用検索エンジン Elasticsearch で BM25（全文）と kNN（ベクトル）を **RRF（Reciprocal Rank Fusion）** で結合するハイブリッド検索を採用した。検索基盤（ES）を本職として扱い、日本語アナライザ（kuromoji）・スケールアウトまで含めて設計した。
+> さらに過去マッチ回数 `match_count` を `log(1 + n)` で重み付けして検索ランキングに混ぜることで、組織が使うほど検索品質が向上する仕組みにした。」
 
 ### 4. Adapter パターン（複数起票先）
 
@@ -43,24 +42,25 @@
 
 ### 5. データ最小化（戦略1）
 
-> 「起票本文は外部チケットシステム（Redmine/GitHub）側が真の保管先。当システムは『チケットID + URL + 分類結果 + Embedding』のメタデータのみを保持する設計にした。
-> これにより 1 レコード数百バイトで済み、Supabase Free 500MB で 15〜20 テナント収容できる。
+> 「起票本文は外部チケットシステム（Redmine/GitHub）側が真の保管先。当システムは『チケットID + URL + 分類結果（メタ）』のメタデータのみをマネージド DB に保持する設計にした。Embedding・検索文書は ES 側に持つ。
+> これにより DB の 1 レコードは数百バイトで済み、マネージド DB の小インスタンスでも多数のテナントを収容できる。
 > 副次効果として GDPR の削除要求は外部システムに転送するだけで済み、自社で機密本文を保持しないため**データガバナンス面で有利**。」
 
 ### 6. 無料運用 + コスト感覚
 
-> 「全コンポーネントを無料枠で運用し、月額 $0 を達成した。
+> 「無料枠中心で運用し、初期コストを最小化した。
 >
-> - フロント・バックエンド：Azure App Service F1（Plan A として Oracle Cloud Always Free への移行コストも見積もり済み）
-> - DB：Supabase Free（500MB、pgvector + Vault + RLS）
-> - Embedding：Hugging Face Spaces CPU
-> - LLM：BYOK（利用者の Google API キー）
+> - フロント・バックエンド：Cloud Run / ECS 等のコンテナ基盤（Docker/Kubernetes）
+> - DB：Cloud SQL / RDS 等のマネージド Postgres（RLS + Secret Manager）
+> - 検索：マネージド OpenSearch または自前 Elasticsearch
+> - Embedding：Docker コンテナで独立デプロイ（Python FastAPI）
+> - LLM：BYOK（利用者の API キー）
 >
-> **スケール時の有料化ポイント**は整理してあって：同時接続が増えれば Azure App Service Basic に上げる（$13/月）、テナント増えれば Supabase Pro（$25/月）、LLM 自前提供に切替えるなら従量課金。**コスト感覚のあるエンジニア**として語れる。」
+> **スケール時の有料化ポイント**は整理してあって：同時接続が増えればコンテナのスケールアップ、DB・検索インデックスの増大でストレージ上位プランへ、LLM 自前提供なら推論インスタンス従量課金。**どのコンポーネントから先に課金が始まるか**を予測できる設計。**コスト感覚のあるエンジニア**として語れる。」
 
 ### 7. BYOK 設計（LLM 依存しない）
 
-> 「LLM を必須依存ではなく **プラガブルな拡張** として設計した。基本機能（ハイブリッド検索・動的フォーム）はEmbedding + 古典検索で $0 インフラ運用が成立し、LLM はクエリ書き換えや低確信度時のフォールバックとして、利用者がキーを持ち込んだ時だけ起動する。
+> 「LLM を必須依存ではなく **プラガブルな拡張** として設計した。基本機能（ハイブリッド検索・動的フォーム）はEmbedding + 古典検索で LLM 無しでも成立し、LLM はクエリ書き換えや低確信度時のフォールバックとして、利用者がキーを持ち込んだ時だけ起動する。
 > これによりサービス側のランニングコストを最小化し、利用者の好みの LLM プロバイダ（Gemini, Groq, Claude 等）を選べる柔軟性も得た。」
 
 ### 8. 3段階エスカレーション
@@ -81,19 +81,20 @@
 ### 11. 段階的発展ストーリー
 
 > 「最初に Streamlit で PoC を作り、本質的な分類戦略を確認した。
-> Streamlit では本質的に厳しかった **マルチテナント・本物のセッション管理・同時接続・本格的な認証** を解決するため、ASP.NET Core + Blazor Server に載せ替えた。
+> Streamlit では本質的に厳しかった **マルチテナント・本物のセッション管理・同時接続・本格的な認証** を解決するため、Node.js + TypeScript に載せ替えた。
 > PoC で固まった戦略（Embedding 検索 + LLM フォールバック・テーブル駆動の動的フォーム・カテゴリ別＋問題別必須情報結合）は資産として継承し、本格 Web 版では追加機能（マルチテナント、ハイブリッド検索、Adapter、埋込ウィジェット等）に開発工数を集中できた。」
 
 ## 採用企業別の刺さりポイント
 
-### grasys
+### データ収集・検索基盤・AI 系
 
-- 無料運用 + スケール時の有料化ポイント整理（**コスト感覚**）
-- Postgres + pgvector + RLS + Vault の使いこなし（**マネージドサービス**）
+- E2E テスト自動化（Playwright）+ RLS 越境がないことの E2E 検証 + CI（**品質・テスト設計**）
+- 無料枠中心の運用 + スケール時の課金ポイント整理（**コスト感覚**）
+- PostgreSQL + RLS + Elasticsearch + Secret Manager の使いこなし（**マネージド／検索基盤**）
 - マルチテナントでの情報漏洩リスク対策（**セキュリティ意識**）
 - Adapter パターン・依存性注入（**設計力**）
 - RAG パイプライン全体の設計経験（**実装力**）
-- ハイブリッド検索 + LLM フォールバック（**ML 技術選定**）
+- ハイブリッド検索（BM25 + kNN）+ LLM フォールバック（**ML 技術選定**）
 
 ### 汎用 Web/SaaS
 
@@ -124,19 +125,19 @@
 
 ### 「なぜこの技術スタック？」
 
-> 「既存スキル（Unity C#、Python の既存 Streamlit 版）の活用と、grasys 等の C# 案件への訴求のバランス。TypeScript 一本は学習コストと開発速度のトレードオフを考慮し見送った。Blazor Server で C# フルスタックを実現し、ML 部分のみ Python（FastAPI 推論サーバ）に分離した。」
+> 「対象プロダクト領域（自社 Web アプリ）の実務スタックに合わせ、フロント・API・インフラ・テストを **TypeScript / Node.js のフルスタック**に寄せた。検索は専用エンジン（Elasticsearch）でハイブリッド検索（BM25 + kNN）をスケールさせ、主要フローは Playwright で E2E テスト自動化する（特に RLS のテナント越境がないことの検証）。型をフロント〜バックで共有でき整合性を確保できるのが利点。ML 推論（Embedding）のみ Python の独立サービスに分離し、将来は ONNX で Node 内蔵化して TS 一本化もできる設計にした。」
 
 ### 「マルチテナントどう作ってる？」
 
-> 「Row Level Security 一択。schema-per-tenant は無料枠での運用不可、RLS は Postgres 標準で運用シンプル。Supabase Auth で発行された JWT を ASP.NET Core 側で検証してテナントを解決し、EF Core の接続インターセプタで `SET LOCAL app.tenant_id` を発行、RLS ポリシーがそれを参照する方式にした。`auth.uid()` ベースではなくセッション変数直接方式に倒したのは、ASP.NET Core が Postgres に直接接続する構成だから。E2E テストでテナント越境がないことを担保。API キー等の特に秘匿なものは Supabase Vault で暗号化追加保管。」
+> 「Row Level Security 一択。schema-per-tenant は無料枠での運用不可、RLS は Postgres 標準で運用シンプル。OIDC プロバイダの JWT を Node API 側で検証してテナントを解決し、Node のデータ層がトランザクション先頭で `SET LOCAL app.tenant_id` を発行、RLS ポリシーがそれを参照する方式にした。`auth.uid()` ベースではなくセッション変数直接方式に倒したのは、Node API が Postgres に直接接続する構成だから。E2E テストでテナント越境がないことを担保。API キー等の特に秘匿なものは Secret Manager で暗号化追加保管。」
 
 ### 「LLM はどう使ってる？」
 
-> 「LLM を必須依存にすると無料運用が崩れるため、**プラガブル**にした。基本機能は Embedding + BM25 のハイブリッド検索で動き、LLM はクエリ書き換えや低確信度時のフォールバックとして利用者の API キーで起動する（BYOK）。プロンプトは構造化出力スキーマで安定化、Pydantic 相当の C# record で検証。」
+> 「LLM を必須依存にするとコストが固定化されるため、**プラガブル**にした。基本機能は Embedding + BM25 のハイブリッド検索で動き、LLM はクエリ書き換えや低確信度時のフォールバックとして利用者の API キーで起動する（BYOK）。プロンプトは構造化出力スキーマで安定化、zod 等で検証。」
 
 ### 「インフラのコスト感は？」
 
-> 「月額 $0 で運用。スケール時の段階的有料化ポイントは整理済み：同時接続が増えれば App Service Basic、DB 500MB 超えれば Supabase Pro、LLM 自前提供なら従量。**サービスが大きくなる過程でどのコストから先に発生するか**を予測できる設計。」
+> 「無料枠中心で運用し、スケール時の段階的有料化ポイントは整理済み：同時接続が増えればコンテナのスケールアップ、DB・検索インデックスの増大でマネージド DB/検索の上位プランへ、LLM 自前提供なら推論従量課金。**サービスが大きくなる過程でどのコストから先に発生するか**を予測できる設計。」
 
 ### 「テストどうしてる？」
 

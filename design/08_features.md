@@ -4,7 +4,7 @@
 
 ### 認証・組織管理
 
-- [ ] サインアップ・サインイン（Supabase Auth）
+- [ ] サインアップ・サインイン（**OIDC**）
 - [ ] 組織（テナント）作成・編集
 - [ ] テナントメンバー招待・ロール管理（admin/member）
 - [ ] 組織別ボット URL 払い出し（`/t/{slug}/chat`）
@@ -49,7 +49,7 @@
 - [ ] destination 登録・編集（接続テスト機能付き）
 - [ ] **プライマリ＋切替**（fan-out なし）
 - [ ] フィールドマッピング（JSONB）
-- [ ] **API キー Supabase Vault 保管**
+- [ ] **API キー Secret Manager 保管**（DB には secret_ref のみ）
 - [ ] 起票本文 Markdown 化（既存 Streamlit 版 `build_description` 移植）
 - [ ] 起票失敗時の `draft_fields` 短期保持・リトライ
 
@@ -98,7 +98,7 @@
 
 - [ ] RLS ポリシー E2E テスト（テナント間漏洩がないことの保証）
 - [ ] エラー監視（Sentry 無料枠）
-- [ ] Keep-alive ping（Supabase Free の 7 日無操作自動停止防止、GitHub Actions cron）
+- [ ] 採用面接前のウォームアップ運用（コールドスタート対策、必要なら GitHub Actions cron）
 
 ## Phase 2（拡張・追加でストーリー強化）
 
@@ -166,7 +166,7 @@
 ### モデル独自化
 
 - [ ] **日本語特化モデル FT**（独自データで multilingual-e5 を fine-tune）
-- [ ] ONNX 化 + C# 内蔵化
+- [ ] **ONNX 化 + Node 内蔵化**（onnxruntime-node）
 
 ## 明示的に却下した機能（やらない）
 

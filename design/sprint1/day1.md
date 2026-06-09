@@ -1,84 +1,84 @@
 # Sprint 1 Day 1 作業指示書（2026-05-17）
 
 > テーマ: **DB の防御層を立てる**
-> 完了時の状態: Supabase プロジェクトが動き、`portfolio_app` ロールが `NOBYPASSRLS` で接続でき、`knowledge_entries` 1 テーブルだけ RLS のお手本ポリシーが効いている
+> 完了時の状態: managed Postgres + OIDC プロバイダ + Secret Manager がプロビジョニングされ、`portfolio_app` ロールが `NOBYPASSRLS` で接続でき、`knowledge_entries` 1 テーブルだけ RLS のお手本ポリシーが効いている
 > 推定所要: 4〜6 時間
 
 ---
 
-## Day1-1. Supabase プロジェクト作成
+## Day1-1. managed Postgres + OIDC + Secret Manager のプロビジョニング [INFRA]
 
 **目的**
 Auth と DB の基盤を得る。JWKS URL と DB 接続文字列を確保し、Day 2 以降のブロッカーを潰す。
 
 **前提確認**
-- [ ] Supabase アカウントを持っている（無ければ GitHub OAuth で 1 分で作成）
+- [ ] クラウドアカウントを持っている（managed Postgres と OIDC プロバイダを作れる）
 - [ ] 1Password / Bitwarden などのパスワード保管庫がある
 
 **手順**
-1. https://supabase.com/dashboard → **New project**
-   - Name: `easy-chatbot-maker`（任意）
+1. managed Postgres インスタンス（Cloud SQL / RDS など）を作成
+   - インスタンス名: `easy-chatbot-maker`（任意）
    - DB password: 自動生成して保管庫に保存（**この場でメモらないと二度と見られない**）
-   - Region: `Northeast Asia (Tokyo)`
-   - Plan: Free
-2. プロジェクト作成後（2 分ほど待つ）、左メニュー **Project Settings → API** で以下を控える:
-   - `Project URL`（例: `https://abc123.supabase.co`）
-   - `anon` `public` key
-   - `service_role` `secret` key（**取扱注意**、フロントに出さない）
-3. **Project Settings → API → JWT Settings** の `JWT Secret` を控える（HS256 検証のフォールバック用）
-4. **Project Settings → Database → Connection string → URI**（Direct connection, port 5432）を控える。形式:
+   - Region: `Northeast Asia (Tokyo)` 相当（`ap-northeast-1`）
+   - Postgres バージョン: 16
+2. OIDC プロバイダ（Identity Platform / Cognito / Auth0 のいずれか）を作成し、以下を控える:
+   - `Issuer`（例: `https://issuer.example.com/`）
+   - `JWKS URL`（例: `https://issuer.example.com/.well-known/jwks.json`）
+   - `Audience`（このアプリ用の client/audience）
+3. Secret Manager に DB 接続情報・OIDC 設定を登録する（本番値は環境変数注入の経路を確保しておく）
+4. managed Postgres の接続文字列（Direct connection, port 5432）を控える。形式:
    ```
-   postgresql://postgres.<ref>:<password>@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres
+   postgresql://postgres:<password>@<host>:5432/postgres
    ```
-   ※ Supabase は Direct を `pooler` 経由で出すことが多い。port 5432 が Direct、6543 は Transaction Pooler
+   ※ Pooler を挟む構成なら Direct(5432) を使う。Transaction Pooler(6543) はトランザクション制御に制約があるので避ける
 5. リポジトリ直下に `.env.local` を作成（`.gitignore` に追記済みであることを確認）:
    ```
-   SUPABASE_URL=https://abc123.supabase.co
-   SUPABASE_JWKS_URL=https://abc123.supabase.co/auth/v1/.well-known/jwks.json
-   SUPABASE_JWT_SECRET=...
-   SUPABASE_DB_URL_OWNER=postgresql://postgres.<ref>:<password>@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres
+   OIDC_ISSUER=https://issuer.example.com/
+   OIDC_JWKS_URL=https://issuer.example.com/.well-known/jwks.json
+   OIDC_AUDIENCE=easy-chatbot-maker
+   DATABASE_URL_OWNER=postgresql://postgres:<password>@<host>:5432/postgres
    ```
 
 **完了確認**
-- [ ] `curl $env:SUPABASE_JWKS_URL` で `{"keys":[...]}` が返る
-- [ ] `psql "$env:SUPABASE_DB_URL_OWNER" -c "\dt"` で接続できる（空でも OK）
+- [ ] `curl $env:OIDC_JWKS_URL` で `{"keys":[...]}` が返る
+- [ ] `psql "$env:DATABASE_URL_OWNER" -c "\dt"` で接続できる（空でも OK）
 - [ ] `git status` で `.env.local` が untracked にも出ない（gitignore 済み）
 
 **詰まったら**
-- 接続が拒否される → Region が遠いとタイムアウトしやすい。Direct(5432) と Pooler(6543) を間違えていないか
-- JWKS が 404 → Project URL のサブドメインを確認（`<ref>.supabase.co` 形式）
+- 接続が拒否される → Region が遠いとタイムアウトしやすい。Direct(5432) と Pooler(6543) を間違えていないか、IP 許可リスト/VPC を確認
+- JWKS が 404 → OIDC プロバイダの discovery（`.well-known/openid-configuration`）から `jwks_uri` を引き直す
 
 **AI 依頼テンプレ**: なし（手作業）
 
 ---
 
-## Day1-2. 既存スキーマを Supabase に適用
+## Day1-2. 既存スキーマを managed Postgres に適用 [INFRA]
 
 **目的**
-`infra/db/migrations/0001_schema.sql` を Supabase 上に流し、ローカル開発と同じ 10 テーブルが Supabase 側にも存在する状態を作る。
+`infra/db/migrations/0001_schema.sql` を managed Postgres 上に流し、ローカル開発と同じ 11 テーブルが managed 側にも存在する状態を作る。
 
 **前提確認**
 - [ ] Day1-1 完了
-- [ ] ローカルで `docker compose up postgres` した状態と Supabase で同じスキーマになることをこれから保証する
+- [ ] ローカルで `docker compose up postgres` した状態と managed Postgres で同じスキーマになることをこれから保証する
 
 **手順**
-1. `psql "$env:SUPABASE_DB_URL_OWNER" -f infra/db/init.sql`
-2. `psql "$env:SUPABASE_DB_URL_OWNER" -f infra/db/migrations/0001_schema.sql`
-3. `psql "$env:SUPABASE_DB_URL_OWNER" -c "\dt public.*"` で 10 テーブル確認
+1. `psql "$env:DATABASE_URL_OWNER" -f infra/db/init.sql`
+2. `psql "$env:DATABASE_URL_OWNER" -f infra/db/migrations/0001_schema.sql`
+3. `psql "$env:DATABASE_URL_OWNER" -c "\dt public.*"` で 11 テーブル確認
 
 **完了確認**
-- [ ] 10 テーブル（tenants, user_tenants, categories, field_definitions, validation_rules, knowledge_entries, destinations, inquiries, unclassified_queue, tenant_public_keys）が見える
-- [ ] `\dx` で `vector` / `pg_trgm` 拡張が有効
+- [ ] 11 テーブル（users, tenants, user_tenants, categories, field_definitions, validation_rules, knowledge_entries, destinations, inquiries, unclassified_queue, tenant_public_keys）が見える（`03_db_schema.md` が正。`users` は内部 uuid + `oidc_sub`、初回ログイン時に JIT プロビジョニング）
+- [ ] 全文検索・ベクトル検索は Elasticsearch が担当するため、`vector` / `pg_trgm` 拡張は不要
 
 **詰まったら**
-- 拡張が入らない → Supabase は `vector` / `pg_trgm` をデフォルトで有効化できる。**Database → Extensions** から GUI で ON にしても可
-- `init.sql` の `CREATE EXTENSION` が `must be owner` で失敗 → Supabase は `superuser` ではないので、GUI 経由で拡張を入れ、`init.sql` の該当行をコメントアウトして再実行
+- スキーマ適用が `must be owner` で失敗 → 接続ロールが所有者でない。`DATABASE_URL_OWNER` が正しいロールを指しているか確認
+- `users` の `oidc_sub` 一意制約に引っかかる → JIT プロビジョニングは「`oidc_sub` で UPSERT」が前提。重複投入していないか確認
 
 **AI 依頼テンプレ**: なし（コマンド実行のみ）
 
 ---
 
-## Day1-3. `0002_rls_roles.sql` を書く
+## Day1-3. `0002_rls_roles.sql` を書く [INFRA]
 
 **目的**
 `portfolio_owner`（マイグレーション専用）と `portfolio_app`（アプリ接続専用・`NOBYPASSRLS`）の 2 ロールを作る。これが**未対応だと RLS が無力化**される。
@@ -123,29 +123,29 @@ GRANT 粒度を誤ると RLS をすり抜ける接続経路が残る。面接で
    ALTER DEFAULT PRIVILEGES IN SCHEMA public
      GRANT USAGE, SELECT ON SEQUENCES TO portfolio_app;
    ```
-3. Supabase の SQL Editor で `portfolio_app` 用のパスワードを生成し、`.env.local` に `SUPABASE_DB_URL_APP` として `postgres.<ref>` の代わりに `portfolio_app` を使った接続 URL を追加
+3. `portfolio_app` 用のパスワードを生成し、`.env.local` に `DATABASE_URL_APP` として `portfolio_app` を使った接続 URL を追加
    ```
-   SUPABASE_DB_URL_APP=postgresql://portfolio_app:<password>@aws-0-ap-northeast-1.pooler.supabase.com:5432/postgres
+   DATABASE_URL_APP=postgresql://portfolio_app:<password>@<host>:5432/postgres
    ```
 4. SQL を流す（パスワードは psql 変数で渡す）:
    ```powershell
-   psql "$env:SUPABASE_DB_URL_OWNER" -v app_password="'<生成したパスワード>'" -f infra/db/migrations/0002_rls_roles.sql
+   psql "$env:DATABASE_URL_OWNER" -v app_password="'<生成したパスワード>'" -f infra/db/migrations/0002_rls_roles.sql
    ```
 
 **完了確認**
-- [ ] `psql "$env:SUPABASE_DB_URL_OWNER" -c "\du"` で 2 ロールが見える
-- [ ] `psql "$env:SUPABASE_DB_URL_OWNER" -c "SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname IN ('portfolio_owner','portfolio_app')"` で `portfolio_app` が `f`（false = NOBYPASSRLS）
-- [ ] `psql "$env:SUPABASE_DB_URL_APP" -c "SELECT 1"` で `portfolio_app` として接続できる
+- [ ] `psql "$env:DATABASE_URL_OWNER" -c "\du"` で 2 ロールが見える
+- [ ] `psql "$env:DATABASE_URL_OWNER" -c "SELECT rolname, rolbypassrls FROM pg_roles WHERE rolname IN ('portfolio_owner','portfolio_app')"` で `portfolio_app` が `f`（false = NOBYPASSRLS）
+- [ ] `psql "$env:DATABASE_URL_APP" -c "SELECT 1"` で `portfolio_app` として接続できる
 
 **詰まったら**
-- `REASSIGN OWNED BY postgres` が失敗 → Supabase のスキーマは `supabase_admin` 所有のことがある。`SELECT tableowner FROM pg_tables WHERE schemaname='public'` で実所有者を確認し、その名前を `REASSIGN OWNED BY ...` に入れる
-- 接続できない → Supabase Free は外部 IP 制限がデフォルト無効だが、念のため Network Restrictions を確認
+- `REASSIGN OWNED BY postgres` が失敗 → managed Postgres では初期所有者がプロバイダ管理ロールのことがある。`SELECT tableowner FROM pg_tables WHERE schemaname='public'` で実所有者を確認し、その名前を `REASSIGN OWNED BY ...` に入れる
+- 接続できない → managed Postgres の IP 許可リスト / VPC / SSL 要件を確認
 
 **AI 依頼テンプレ**: なし（自分で書く範囲）
 
 ---
 
-## Day1-4. `knowledge_entries` 1 テーブルだけ RLS のお手本ポリシーを書く
+## Day1-4. `knowledge_entries` 1 テーブルだけ RLS のお手本ポリシーを書く [INFRA]
 
 **目的**
 **「最初の 1 個」を自分の手で書く**。残り 9 テーブルは Day 2-1 で AI に複製させるので、ここでポリシーの型を確定させる。
@@ -172,9 +172,9 @@ RLS は漏洩したら一発アウト。`USING` / `WITH CHECK` / セッション
    - `current_setting('app.tenant_id', true)` の第二引数 `true` は「未定義なら NULL を返す」。これにより `SET LOCAL` 未発行接続は空集合になる（フェイルセーフ）
 3. owner で流す:
    ```powershell
-   psql "$env:SUPABASE_DB_URL_OWNER" -f infra/db/migrations/0003_rls_policies.sql
+   psql "$env:DATABASE_URL_OWNER" -f infra/db/migrations/0003_rls_policies.sql
    ```
-4. 手動検証用のデータ投入（`SQL Editor` か `psql`）:
+4. 手動検証用のデータ投入（`psql`）:
    ```sql
    -- 検証用テナント 2 つを作る
    INSERT INTO tenants (id, slug, name) VALUES
@@ -197,15 +197,15 @@ RLS は漏洩したら一発アウト。`USING` / `WITH CHECK` / セッション
 
 ```powershell
 # ケース 1: A のセッション変数 → A の 1 件だけ
-psql "$env:SUPABASE_DB_URL_APP" -c "BEGIN; SET LOCAL app.tenant_id = '00000000-0000-0000-0000-000000000001'; SELECT title FROM knowledge_entries; ROLLBACK;"
+psql "$env:DATABASE_URL_APP" -c "BEGIN; SET LOCAL app.tenant_id = '00000000-0000-0000-0000-000000000001'; SELECT title FROM knowledge_entries; ROLLBACK;"
 # → a-doc のみ
 
 # ケース 2: B のセッション変数 → B の 1 件だけ
-psql "$env:SUPABASE_DB_URL_APP" -c "BEGIN; SET LOCAL app.tenant_id = '00000000-0000-0000-0000-000000000002'; SELECT title FROM knowledge_entries; ROLLBACK;"
+psql "$env:DATABASE_URL_APP" -c "BEGIN; SET LOCAL app.tenant_id = '00000000-0000-0000-0000-000000000002'; SELECT title FROM knowledge_entries; ROLLBACK;"
 # → b-doc のみ
 
 # ケース 3: セッション変数未設定 → 0 行（フェイルセーフ）
-psql "$env:SUPABASE_DB_URL_APP" -c "SELECT title FROM knowledge_entries;"
+psql "$env:DATABASE_URL_APP" -c "SELECT title FROM knowledge_entries;"
 # → 0 件
 ```
 
@@ -219,11 +219,11 @@ psql "$env:SUPABASE_DB_URL_APP" -c "SELECT title FROM knowledge_entries;"
 
 ## Day 1 終了チェックリスト
 
-- [x] Supabase プロジェクトが動く
-- [x] スキーマ（10 テーブル）が Supabase に存在
+- [x] managed Postgres + OIDC プロバイダ + Secret Manager がプロビジョニング済み
+- [x] スキーマ（11 テーブル）が managed Postgres に存在
 - [x] `portfolio_owner` / `portfolio_app` の 2 ロール、`portfolio_app` は `NOBYPASSRLS`
 - [x] `knowledge_entries` の RLS が 3 ケース（A/B/未設定）すべて期待通り
-- [x] `.env.local` に `SUPABASE_URL` / `SUPABASE_JWKS_URL` / `SUPABASE_JWT_SECRET` / `SUPABASE_DB_URL_OWNER` / `SUPABASE_DB_URL_APP` が揃う
+- [x] `.env.local` に `OIDC_ISSUER` / `OIDC_JWKS_URL` / `OIDC_AUDIENCE` / `DATABASE_URL_OWNER` / `DATABASE_URL_APP` が揃う
 
 ## Day 2 への引き継ぎメモ（自分宛て）
 
