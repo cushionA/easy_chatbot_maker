@@ -87,7 +87,7 @@ LLM フォールバック（BYOK 時のみ） → 該当なし ? 未分類キュ
 | 機能 | 流用度 | 新設計 |
 |---|---|---|
 | `build_llm_master_text` | マスタの整形 | **そのまま流用**（TypeScript 移植） |
-| `build_system_prompt` | システムプロンプト組立 | **プロンプトはそのまま流用** |
+| `build_system_prompt` | システム指示文の組立 | **プロンプトはそのまま流用** |
 | `classify_mock` | MOCK_MODE 用 | テスト用 |
 | `classify` | Ollama API 呼出 | **Gemini API 呼出に置換**（HTTP 直接） |
 | `classify_with_retry` | リトライラッパ | TypeScript のリトライ（指数バックオフ）で実装 |

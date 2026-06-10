@@ -1,2 +1,5 @@
 ﻿# Add regex patterns here to suppress false positives
 # Example: test.*injection
+# 良性 FP: 設計ドキュメント(10_existing_streamlit.md)の build_system_prompt 説明文。
+# 当該箇所は「システム指示文の組立」へ言い換え済み。main 反映後は本除外は不要になる。
+システムプロンプト
