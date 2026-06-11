@@ -1,179 +1,106 @@
 # 07. データ戦略
 
-## 3層のデータ配置
+## 3 層のデータ配置
 
-無料運用前提で、データを「どこに置くか」を3層に分けて最適化。
+無料運用前提で、データを「どこに置くか」を 3 層に最適化する（モデルは [03_db_schema.md](03_db_schema.md)）。
 
 ```
-[ブラウザ（クライアント）]
-  - Embedding モデル本体（Transformers.js, Phase 2）
-  - クエリ単位のベクトル化計算（Phase 2）
+[PostgreSQL（+RLS）]  エンティティ・設定（編集の source of truth）
+  - 用語 / 別名 / ソース / 検知 / 要約キャッシュ / テナント設定 / ウォッチリスト
+  - 容量小（高ボリュームのファクトは置かない）
 
-[サーバ（Node API + PostgreSQL + Elasticsearch + BigQuery）]
-  - PostgreSQL：構造化メタデータ（RLS）
-  - Elasticsearch：検索インデックス（全文 + ベクトル）
-  - BigQuery：利用ログ・分析
-  - 容量最小（〜数MB / テナント）
+[Elasticsearch]  文書（エビデンス・検索）
+  - title / 短いスニペット / 抽出用語 / embedding / content_hash
+  - 本文全文は持たない（下記データ最小化）
 
-[外部システム（Redmine / GitHub Issues）]
-  - チケット本文（フォーム入力結果）
-  - 添付ファイル
-  - 真の保管先（Source of Truth）
+[BigQuery]  出現ファクト + 日次集計（トレンド・検知の素）
+  - occurrences（用語×文書×ソース×ロケール×日付）
+  - daily_term_stats（日次集計）
+  - 公開データセット（GitHub Archive 等）と同居・結合
 ```
 
-## 戦略1：本文は外部システムに置きっぱなし（最も重要）
+## 戦略 1（最重要）：派生データのみ保存・本文全文は持たない
 
-`inquiries` テーブルには本文を持たない：
+題材が「他者サイトの収集」である以上、**何を保存するか**が合法性と容量の両方を決める。
 
-| 列 | 内容 |
+| 保存する（派生データ） | 保存しない |
 |---|---|
-| `external_ticket_id` | "12345" 等 |
-| `external_ticket_url` | "https://redmine.example.com/issues/12345" |
-| `raw_query` | 自然言語入力（短い） |
-| `matched_knowledge_id` | 分類結果 |
-| `match_strategy` | dropdown / keyword / hybrid / llm |
-| `confidence_score` | ナレッジギャップ検出用 |
+| 用語の出現（term × 日 × ソース） | 取得した HTML / 記事本文の全文 |
+| メタ（タイトル・URL・公開日・ソース） | 添付・画像 |
+| **短い文脈スニペット**（用語を含む上限文字数の引用） | 全文のローカル複製 |
+| embedding ベクトル・content_hash | |
+| 要約（自分で生成した派生物） | |
 
-**1レコード数百バイト**。10万件起票しても数十MB。
+- 本文は**抽出処理の最中だけメモリ上で扱い、用語抽出とスニペット生成が終わったら破棄**する。永続化しない。
+- 出典は**必ずリンクで返す**（原文は相手サイトが source of truth）。
+- 根拠の一つは著作権法 30 条の 4（情報解析目的の利用）。ただし同条には但書（**著作権者の利益を不当に害しない**）があり、**ToS（契約）違反やサーバ過負荷は別軸**（規約は契約、過負荷は業務妨害）で個別判断が要る。「30 条の 4 だから無条件で合法」とは考えない。事実データ（順位・出現数・タグ）自体は著作権の保護対象外だが、編集著作物（DB の選択・配列）の保護は別論点。本番運用前に法務確認（[11_open_questions.md](11_open_questions.md) Q9）。
 
-### 副次効果
+> 面接で語る: 「収集物の全文を持つと著作権・容量・削除要求の三重苦になる。保存するのは**派生データ（出現頻度・メタ・短いスニペット・要約）だけ**にし、本文は抽出時に破棄、出典はリンクで返す設計にした。これは合法性・データ最小化・容量を同時に解決する」
 
-- GDPR 等の「データ削除要求」は外部システムに転送するだけで対応
-- 自社で機密本文を保持しない設計はガバナンス的に有利
-- 面接で「データ最小化原則」「データ責任分離」と語れる
+## 戦略 2：収集コンプライアンスをデータ層に内蔵
 
-## 戦略2：Embedding 計算はクライアント（Phase 2）
+- **API / フィード優先**、クロールは公式アクセスが無い対象のみ（[06_destinations.md](06_destinations.md)）。
+- 対象ごとに robots / 利用規約を確認し、`sources.robots_policy` / `rate_limit_rpm` に保持。
+- レート制御・条件付き GET で相手サーバ負荷を最小化。
+- **規約でスクレイピングを禁じる対象は収集しない**（小説投稿サイト・pixiv・大手 SNS 等）。判断は「需要 × 公式アクセスが無い × 合法」の 3 条件で行う。
 
-`intfloat/multilingual-e5-base` を Transformers.js でブラウザ実行：
+## 戦略 3：トレンドの素は BigQuery、検索は Elasticsearch、編集は Postgres
 
-- 量子化版モデル（〜100MB）をブラウザにダウンロード
-- Service Worker で永続キャッシュ → 次回以降は読み込みなし
-- クエリは**ブラウザでベクトル化してから**サーバに送信
-- サーバの CPU / RAM を使わない
+| データ | 場所 | 理由 |
+|---|---|---|
+| 出現ファクト・日次集計 | BigQuery | 時系列集計・検知。公開 DS と同居 |
+| 文書（エビデンス・関連トピック） | Elasticsearch | BM25 + kNN |
+| 用語辞書・ソース・設定・ウォッチリスト | PostgreSQL | 構造化メタ・RLS |
+| embedding ベクトル | Elasticsearch | 関連トピック / 近重複 |
+| 要約 | PostgreSQL（`summaries` キャッシュ） | 派生物・再生成可 |
+| BYOK LLM キー | Secret Manager | 暗号化必須 |
+| 取得 HTML / 本文全文 | **保存しない** | 抽出後破棄 |
 
-### メリット
+## BigQuery のコスト勘所
 
-- サーバ Embedding 推論サービス（FastAPI）が**Phase 2 で不要**になる
-- 「**クエリ内容がベクトル化されてからサーバに到達するため、原文を中継しないモード**」をプライバシー強化版として語れる
-- Cloud Run/ECS などのコンテナ RAM 制約から解放される
+DWH のコストは**スキャン量**で決まる。無料枠（クエリ 1TB/月）に収めるための設計:
 
-### MVP では？
+- `occurrences` は **`occurred_date` でパーティション + `term_slug` でクラスタリング**。期間・用語で絞ればスキャンが激減。
+- F1 / F2 / F5 は生ファクトを毎回舐めず、**事前集計 `daily_term_stats`**（スケジュールクエリで日次更新）を読む。
+- ダッシュボードは集計テーブル参照に限定し、アドホックな全件スキャンを避ける。
 
-MVP は **サーバ側 Embedding**（FastAPI）で始める：
+## daily_term_stats のスケジューリング
 
-- ブラウザ Embedding は実装コストがある
-- 初回 100MB のダウンロード UX を解決する必要
-- iPhone Safari の挙動検証が必要
+`daily_term_stats` は BigQuery のスケジュールクエリで**日次更新**（例: JST 02:00、前日分 `occurrences` が出揃った後）。F1 / F2 / F5 はすべてこの集計に依存するため、**失敗時はアラート**し、UI は**直前の成功日のキャッシュにフォールバック**する。前日分が欠けたら翌日のクエリで遡って再構築する。取り込みは `(occurred_date, doc_id, term_slug)` で冪等（[03_db_schema.md](03_db_schema.md)）なので、再実行で水増ししない。
 
-Phase 2 で「サーバ→クライアント」の移行を行う。インターフェース（HTTP）は変えない。
+## ES 文書の保持とコスト
 
-## 戦略3：マスタは Web UI アップロード（MVP は A 案）
+`documents` は収集ごとに増え続け、特に 768 次元 embedding（約 3KB/件）が効く。`published_at` が一定期間（初期 1 年）より古く参照の無い文書は ILM（index lifecycle management）で削除 / cold 移行する。MVP は手動 reindex、ILM 自動化は Phase 2。古い文書を消しても **`daily_term_stats`（BigQuery）の時系列は残る**ので、トレンド履歴は失われず F6 の出典リンクが一部切れるだけ。
 
-ナレッジマスタの取り込みは Web UI から：
+## 容量見積もり（ポートフォリオ規模）
 
-- 管理者が Excel / JSON をアップロード
-- サーバでパース → DB 保存 → 元ファイルは即削除
-- DB にはテキストのみ残る（Embedding ベクトルは Elasticsearch へ）
-
-### Git 連携は Phase 2 で
-
-技術リテラシーの高い組織向けに Git からの同期も将来サポート可能：
-
-```typescript
-interface IKnowledgeSource {
-    fetch(config: SourceConfig): Promise<KnowledgeEntry[]>;
-}
-
-class WebUploadSource implements IKnowledgeSource { ... }     // MVP
-class GitRepositorySource implements IKnowledgeSource { ... } // Phase 2
-```
-
-パースには Excel に **exceljs（または SheetJS/xlsx）**、JSON は**標準 JSON**（`JSON.parse`）を使用。
-
-**MVP では実装しないが、インターフェースで拡張可能性を示す**。
-
-## クライアントローカルストレージは使わない
-
-「マスタを利用者ブラウザに置く」は破綻する理由：
-
-- マルチテナント SaaS は **同組織内の複数ユーザーがデータ共有**するのが本質
-- ユーザー1がアップロード → ユーザー2はマスタにアクセスできない（同期不可）
-- IndexedDB 容量は信頼性低い、ブラウザキャッシュクリアで消える
-- ブラウザツールに退化する
-
-## 容量見積もり
-
-### 1テナントあたり
-
-| 種類 | 1件 | 件数 | 小計 | 配置 |
+| データ | 1 件 | 規模 | 小計 | 配置 |
 |---|---|---|---|---|
-| `knowledge_entries`（テキスト） | 〜1KB | 100問題 | 100KB | PostgreSQL |
-| `knowledge_entries.embedding`（vec(768)） | 1.5KB | 100問題 | 150KB | Elasticsearch |
-| `inquiries`（メタ、本文無し） | 〜1KB | 1万件 | 10MB | PostgreSQL |
-| `unclassified_queue` | 〜2KB | 1000件 | 2MB | PostgreSQL |
-| **合計（PostgreSQL メタのみ）** | | | **〜12MB** | |
+| 用語 + 別名 | 〜0.3KB | 数千語 | 〜数 MB | PostgreSQL |
+| ソース | 〜1KB | 数十 | 〜数十 KB | PostgreSQL |
+| 文書（メタ + スニペット + vec768） | 〜2KB | 数万〜数十万 | 数百 MB | Elasticsearch |
+| occurrences | 〜0.1KB | 数百万行 | 数百 MB | BigQuery（圧縮・列指向） |
+| daily_term_stats | 〜0.1KB | 用語×日 | 小 | BigQuery |
 
-### マネージド DB/検索インスタンスでのキャパ
-
-Cloud SQL/RDS 小インスタンス（例: 10GB）では数百テナント相当を収容可能。
-
-ポートフォリオ規模（1〜3テナント）では全く問題なし。
-
-スケール時の有料化ポイント：
-- テナント数増加 → マネージド DB / マネージド検索の上位プランへ昇格
-- さらなるスケール → 自前 Elasticsearch クラスタ / PostgreSQL レプリカ構成
-
-## マスタアップロード後の処理フロー
-
-```
-[管理者ブラウザ]
-  Excel/JSON アップロード（multipart/form-data）
-   ↓
-[Node API]
-  - ファイル受信、一時ストレージに保存
-  - パース（Excel: exceljs / JSON: JSON.parse）
-  - スキーマ検証（必須カラム等）
-   ↓
-[Embedding 推論サービス (FastAPI)]
-  - 各 knowledge_entry の (name + keywords + example_queries) を embedding 化
-  - passage: プレフィクスを付与してベクトル返却
-   ↓
-[PostgreSQL: メタ INSERT]
-  - tenant_id 付与で構造化メタデータを INSERT
-   ↓
-[Elasticsearch: passage ベクトル & 全文をインデックス]
-  - ベクトル（kNN 検索用）+ 全文テキストをインデックス登録
-   ↓
-[Node API]
-  - 一時ファイル削除
-  - 完了通知
-```
+OpenSearch 単一ノード + BigQuery 無料枠 + Cloud SQL 最小で**ポートフォリオ規模は無料圏**。スケール時の課金ポイントは「BigQuery スキャン量」「ES 文書数 / QPS」「収集頻度（ノード数）」の順で効く。
 
 ## バックアップ・障害対策
 
 | 対象 | 方針 |
 |---|---|
-| ナレッジマスタ | テナントの手元（アップロード元ファイル）が原本 |
-| 起票本文 | 外部システム側が原本（戦略1） |
-| メタデータ | 失っても再生成可能（マスタ再アップロード→再インデックス） |
-| Elasticsearch インデックス | 失っても再生成可能（マスタ再アップロード→再 embedding→再インデックス） |
-| API キー等秘匿 | Secret Manager | 暗号化必須 |
-| Embedding モデル | サーバ（MVP）→ クライアント（Phase 2） | コスト最適化 |
+| 用語辞書・ソース設定・ウォッチリスト | PostgreSQL（小容量）を定期バックアップ |
+| 文書（ES） | 失っても**再収集で復元可能**（原本は相手サイト） |
+| 出現・集計（BigQuery） | occurrences から集計は再生成可。occurrences は再収集 or 公開 DS から再構築 |
+| BYOK キー | Secret Manager（暗号化） |
 
-**全データ消失しても、テナントが元の Excel/JSON を再アップロードすれば復元可能**な設計。
-
-これは面接で語れる：
-
-> 「無料運用前提のためバックアップに高コストをかけない代わりに、**真のデータは全て外部に残る**設計にした。当システムが全データ消失しても、利用者がマスタを再アップロードし起票履歴は外部から復元可能」
+**全データ消失しても、ソース定義さえ残っていれば再収集で復元できる**（相手サイトが原本）設計。バックアップに高コストをかけない代わりに「真のデータは外部、当方は派生物だけ」を徹底する。
 
 ## サマリ：データはどこにある？
 
-| データ | 場所 | 理由 |
-|---|---|---|
-| マスタ（ナレッジ）テキスト・メタ | PostgreSQL | 構造化メタ管理・RLS |
-| Embedding ベクトル | Elasticsearch インデックス | 検索（kNN + 全文）のため |
-| 起票本文 | 外部システム（Redmine/GitHub） | 真の保管先 |
-| 利用ログ・分析 | BigQuery | 集計・分析のため |
-| Embedding モデル | サーバ（MVP）→ クライアント（Phase 2） | コスト最適化 |
-| API キー等秘匿 | Secret Manager | 暗号化必須 |
-| マスタ元ファイル | アップロード後即削除 | 必要なし |
+| データ | 場所 |
+|---|---|
+| 用語 / 別名 / ソース / 検知 / 要約 / 設定 / ウォッチリスト | PostgreSQL（RLS はテナント単位のみ） |
+| 文書メタ + スニペット + embedding | Elasticsearch |
+| 出現ファクト + 日次集計 | BigQuery |
+| BYOK LLM キー | Secret Manager |
+| 取得 HTML / 本文全文 | 保存しない（抽出後破棄） |
