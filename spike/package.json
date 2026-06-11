@@ -1,0 +1,18 @@
+{
+  "name": "trendscope-spike",
+  "private": true,
+  "type": "module",
+  "description": "throwaway spike: 源泉→抽出→集計→検知信号を実データで1本通して設計を検証する",
+  "scripts": {
+    "hn": "tsx sources/hn.ts",
+    "qiita": "tsx sources/qiita.ts",
+    "verify": "tsx verify.ts",
+    "seed-dict": "tsx dict/build-seed.ts",
+    "run": "tsx run.ts",
+    "report": "tsx report.ts",
+    "trending": "tsx sources/trending.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
+  }
+}

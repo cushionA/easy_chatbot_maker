@@ -1,254 +1,204 @@
 # 04. セキュリティとマルチテナント分離
 
 > **採用構成はマネージドサービス前提**（OIDC プロバイダ + Secret Manager + マネージド Postgres: Cloud SQL / RDS）。
-> Node.js + TypeScript の API サーバが Postgres に**直接接続**してアプリロジックを動かす。OIDC プロバイダはトークン発行のみを担い、DB アクセスのゲートウェイは経由しない。
+> Node.js + TypeScript の API / 収集ワーカーが Postgres に**直接接続**する。OIDC プロバイダはトークン発行のみを担う。
 
-## 3 層の防御
+## 軽量マルチテナント（共有コーパス + テナントオーバーレイ）
+
+TrendScope のトレンド本体（用語・出現・集計・公開ソース・文書）は**全テナント共有のグローバルデータ**で、テナント分離の対象ではない。テナント単位で分離するのは次の**オーバーレイ**だけ:
+
+| データ | スコープ | 分離 |
+|---|---|---|
+| 用語 / 別名 / 検知 / 要約 / 公開ソース / 文書（ES）/ 集計（BigQuery） | **グローバル共有** | 分離不要（全認証ユーザーが読む） |
+| `tenant_settings`（BYOK キー参照・既定ロケール） | テナント | **RLS** |
+| `watchlists` / `watchlist_items`（追跡リスト） | テナント | **RLS** |
+| プライベート `sources`（テナント自社ブログ等。fast-follow） | テナント | **RLS** + ES フィルタ |
+
+これにより、RLS / OIDC / Secret Manager の防御を**本当にテナント固有な情報だけ**に集中させ、本体データを無理にテナント複製しない（コスト・複雑度を抑える）。
+
+## 3 層の防御（テナント単位データに対して）
 
 | 層 | 仕組み | 役割 |
 |---|---|---|
-| **認証** | OIDC プロバイダ（JWT） | 誰が来たか確認 |
-| **認可** | `user_tenants` テーブル + JWT クレーム照合 | このユーザーはどのテナントを名乗っていいか |
-| **データ分離** | Row Level Security (RLS) + `current_setting('app.tenant_id')` | アプリのフィルタ漏れを DB レベルで遮断 |
+| **認証** | OIDC プロバイダ（JWT / JWKS） | 誰が来たか確認 |
+| **認可** | `user_tenants` + JWT クレーム照合 | このユーザーはどのテナントを名乗っていいか |
+| **データ分離** | RLS + `current_setting('app.tenant_id')` | アプリのフィルタ漏れを DB レベルで遮断 |
 
-各層は独立に効く。1 層が破れても残り 2 層で防ぐ「深層防御」が前提。
+各層は独立に効く深層防御。
 
-## マルチテナント分離方式: RLS 一択
+## RLS のしくみ（直接接続版）
 
-### Schema-per-tenant を採用しなかった理由
-
-- 1000 テナント運用には 1000 schema 管理が必要、現実的でない
-- 多 schema 運用はマネージド Postgres でも管理コストが跳ね上がる
-- マイグレーションがテナント数倍になる
-
-### RLS のしくみ（直接接続版）
-
-全テーブルに `tenant_id` 列を持たせ、ポリシーは Postgres のセッション変数 `app.tenant_id` を参照する。
+テナント単位テーブルに `tenant_id` 列を持たせ、ポリシーはセッション変数 `app.tenant_id` を参照する。
 
 ```sql
-ALTER TABLE knowledge_entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE watchlists ENABLE ROW LEVEL SECURITY;
+ALTER TABLE watchlists FORCE ROW LEVEL SECURITY;
 
-CREATE POLICY tenant_isolation ON knowledge_entries
+CREATE POLICY tenant_isolation ON watchlists
   USING       (tenant_id = current_setting('app.tenant_id', true)::uuid)
   WITH CHECK  (tenant_id = current_setting('app.tenant_id', true)::uuid);
 ```
 
-- `app.tenant_id` は Node API が**リクエスト開始時に `SET LOCAL app.tenant_id = ...` で流す**（後述）
-- `USING` で SELECT/UPDATE/DELETE を、`WITH CHECK` で INSERT/UPDATE の書き込みも防ぐ
-- アプリ側で `WHERE tenant_id = ?` を書き忘れても DB が漏洩を防ぐ
-- `current_setting(..., true)` の第二引数（missing_ok）で、セッション変数未設定時は例外ではなく NULL → 空集合（フェイルセーフ）になる
+- `app.tenant_id` は Node が**リクエスト / ジョブ単位トランザクションの先頭で `SET LOCAL app.tenant_id = ...`** で流す。
+- `USING` で SELECT/UPDATE/DELETE を、`WITH CHECK` で INSERT/UPDATE の書込も防ぐ。
+- `current_setting(..., true)`（missing_ok）で、未設定時は例外でなく NULL → 空集合（**フェイルセーフ**）。
 
-#### なぜ JWT クレームを DB 側で参照しないか
+### なぜ JWT クレームを DB 側で参照しないか
 
-DB 側で JWT クレームを直接読むポリシー（`auth.uid()` 相当）は、REST ゲートウェイが JWT を解釈してセッションに値を注入する構成でないと機能しない。本プロジェクトのように **Node API が Postgres へ直接接続する構成では、DB 側で JWT クレームを参照できない**。
-
-代わりに、テナント解決（JWT → `user_tenants` 照合 → 当該リクエストのテナント ID 確定）を**アプリ層で完結**させ、確定した `tenant_id` だけをセッション変数に流す方式に統一する。RLS は最終防衛線、認可ロジックは Node API 側、と責務を分ける。
+DB 側で JWT クレームを直接読むポリシー（`auth.uid()` 相当）は、ゲートウェイが JWT を解釈してセッションに注入する構成でないと機能しない。**Node が Postgres へ直接接続する構成では DB 側で JWT を参照できない**。テナント解決（JWT → `user_tenants` 照合）を**アプリ層で完結**させ、確定した `tenant_id` だけをセッション変数に流す。RLS は最終防衛線、認可ロジックは Node 側、と責務分離。
 
 ### 適用範囲
 
 | テーブル | ポリシー |
 |---|---|
-| `tenants` | 自分が所属する `tenant_id` のみ可視（`SELECT` ベースの別ポリシー） |
+| `tenants` | 自分が所属する `tenant_id` のみ可視 |
 | `user_tenants` | 自分のレコードのみ可視 |
-| `categories` / `validation_rules` / `field_definitions` / `knowledge_entries` | テナント分離 |
-| `destinations` / `inquiries` / `unclassified_queue` | テナント分離 |
-| `tenant_public_keys` | テナント分離（admin のみ書込可は別途アプリ層で制御） |
+| `tenant_settings` / `watchlists` / `watchlist_items` | テナント分離 |
+| `sources` | グローバル（`tenant_id IS NULL`）+ 自テナントのみ可視、書込は自テナント分のみ（`tenant_id IS NULL` は書けない） |
 
-実 SQL は [03_db_schema.md](03_db_schema.md) を参照。
+グローバル共有テーブル（`terms` / `term_aliases` / `detections` / `summaries` / `documents`）は RLS を有効化せず、`portfolio_app` に SELECT を許可、**書込は収集パイプライン / 管理ツール（owner）に限定**。実 SQL は [03_db_schema.md](03_db_schema.md)。
 
 ## 専用 DB ロールの分離（`BYPASSRLS` 回避）
 
-定番の落とし穴: **スキーマ所有者ロールは暗黙の `BYPASSRLS` 属性を持つ**ことが多く、そのロールでアプリが接続すると `ENABLE ROW LEVEL SECURITY` してもポリシーが効かない。
-
-対策として 2 ロール構成にする:
+スキーマ所有者ロールは暗黙の `BYPASSRLS` を持ちがちで、そのロールで接続すると RLS が効かない。2 ロール構成にする:
 
 | ロール | 用途 | 属性 |
 |---|---|---|
-| `portfolio_owner` | マイグレーション実行・スキーマ変更 | スキーマ所有 |
-| `portfolio_app` | アプリ実行時の接続 | **`NOBYPASSRLS`**, 必要な権限のみ GRANT |
+| `portfolio_owner` | マイグレーション・スキーマ変更・**グローバルデータ書込（収集パイプライン）** | スキーマ所有 |
+| `portfolio_app` | ユーザー向け API 接続 | **`NOBYPASSRLS`**, 必要権限のみ GRANT |
 
 ```sql
 CREATE ROLE portfolio_app NOLOGIN NOBYPASSRLS;
 GRANT CONNECT ON DATABASE portfolio TO portfolio_app;
 GRANT USAGE ON SCHEMA public TO portfolio_app;
-GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO portfolio_app;
-ALTER DEFAULT PRIVILEGES IN SCHEMA public
-  GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO portfolio_app;
+
+-- 認証・所属（JIT で users を upsert、所属は読み取り）
+GRANT SELECT, INSERT, UPDATE ON users TO portfolio_app;
+GRANT SELECT ON tenants, user_tenants TO portfolio_app;
+
+-- グローバル curation（F9 辞書・identity 対応付け・検知レビュー）。app 層で admin 認可 + 監査ログ必須
+GRANT SELECT, INSERT, UPDATE, DELETE ON terms, term_aliases, term_identities TO portfolio_app;
+GRANT SELECT ON detections TO portfolio_app;
+GRANT UPDATE (status) ON detections TO portfolio_app;  -- confirm/dismiss のみ（列レベル）
+GRANT SELECT ON summaries TO portfolio_app;            -- 生成は worker(system key)、app は読み取り
+
+-- テナントオーバーレイ: CRUD（RLS が自テナントに制限）
+GRANT SELECT, INSERT, UPDATE, DELETE ON tenant_settings, watchlists, watchlist_items TO portfolio_app;
+
+-- sources: 混在（グローバル SELECT + 自テナント書込。RLS の sources_modify が tenant_id を強制）
+GRANT SELECT, INSERT, UPDATE, DELETE ON sources TO portfolio_app;
 ```
 
-Node API の接続設定（`pg` / node-postgres）は `portfolio_app` を使う。マイグレーションは別接続設定（`portfolio_owner`）から実行する運用。なお `portfolio_owner` はテーブル所有者として RLS をすり抜けうるため、全テーブルに `FORCE ROW LEVEL SECURITY` を設定して owner にも RLS を強制する。
+> **`ALL TABLES` で一括付与しない**。トレンドの時系列ファクト（`occurrences` / `daily_term_stats`）は **BigQuery** にあり Postgres GRANT の対象外なので、Postgres 経由で時系列を改ざんすることはできない。Postgres のグローバル curation テーブル（`terms` / `term_aliases` / `detections`）は **F9 辞書管理・検知レビューという admin 操作**で書き換わるため `portfolio_app` に書込を与えるが、**RLS はグローバルテーブルを scope できない**ので保護はアプリ層の **admin 認可ガード + 監査ログ**が一次防御（member は書けない）。`summaries` は worker（system key）生成・app は読み取りのみ。新規テーブルへ自動付与する `ALTER DEFAULT PRIVILEGES` は使わず、テーブルごとに明示 GRANT する。
+
+`portfolio_owner` はテーブル所有者として RLS をすり抜けうるため、テナント単位テーブルに `FORCE ROW LEVEL SECURITY` を設定。収集ワーカーがグローバルデータを書く時は `portfolio_owner`（または書込専用 GRANT を持つ別ロール）で接続し、ユーザー向け API は `portfolio_app` を使い分ける。
 
 ## 認証フロー
 
 ```
-このチェックは毎回やる
 [ユーザー]
    │ OIDC プロバイダでサインイン
-   │
-   ↓ JWT 発行（sub=user_id, exp など）
-   │
-[Node.js + TypeScript API（NestJS / Express）]
-   │ ① JWKS で署名検証（OIDC プロバイダの公開鍵）
-   │ ② JWT クレームから sub（OIDC subject）を抽出
-   │ ③ users を oidc_sub で upsert（JIT プロビジョニング）して内部 user_id を得て、user_tenants を JOIN して所属テナント一覧を取得
-   │ ④ URL `/t/{slug}/chat` の slug を tenants.slug と照合
-   │    所属していなければ 403
-   │ ⑤ 確定した tenant_id をリクエストコンテキスト（AsyncLocalStorage 等）に保持
-   │
+   ↓ JWT 発行（sub, exp など）
+[Node API（NestJS / Express）]
+   │ ① JWKS で署名検証
+   │ ② JWT クレームから sub を抽出
+   │ ③ users を oidc_sub で upsert（JIT）→ 内部 user_id、user_tenants で所属テナント取得
+   │ ④ URL `/t/{slug}/...` の slug を tenants.slug と照合（所属外なら 403）
+   │ ⑤ 確定した tenant_id をリクエストコンテキスト（AsyncLocalStorage）に保持
    ↓
-[データ層フック: リクエスト単位のトランザクション先頭]
-   │ ⑥ トランザクション開始直後に
-   │    SET LOCAL app.tenant_id = '<解決した uuid>';
-   │    SET LOCAL app.user_id   = '<内部 users.id (uuid)>';
-   │    を発行（必ず同一トランザクション内で流す）
-  （SET LOCAL = このトランザクション中だけ有効な設定値を app.tenant_id にセットする）
-   │
-[Postgres: portfolio_app ロールで接続]
-   │ ⑦ RLS ポリシーが current_setting('app.tenant_id') を参照し
-   │    他テナント行を物理的に弾く
+[データ層フック: リクエスト単位トランザクション先頭]
+   │ ⑥ SET LOCAL app.tenant_id = '<uuid>'; SET LOCAL app.user_id = '<users.id>';
+   ↓
+[Postgres: portfolio_app で接続]
+   │ ⑦ RLS が current_setting('app.tenant_id') を参照しテナント単位行を分離
 ```
 
 ### `SET LOCAL` の発行ポイント
 
-- **リクエスト単位でトランザクションを張り、その先頭で `SET LOCAL` を発行する**のが本筋
-  （`pg` のコネクションを borrow → `BEGIN` → `SET LOCAL` → クエリ群、という流れを 1 つのデータ層フックに集約する）
-- `SET LOCAL` は**必ず同一トランザクション内**で流す。トランザクション外で発行すると設定が乗らないため、フック側でトランザクション境界を強制する
-- `SET LOCAL` はトランザクション終了時に自動リセットされるので、別テナント用のリクエストが後続でプールから同じ接続を borrow しても安全
+- リクエスト / ジョブ単位でトランザクションを張り、**その先頭で `SET LOCAL` を発行**（borrow → `BEGIN` → `SET LOCAL` → クエリ群をデータ層フックに集約）。
+- `SET LOCAL` は必ず同一トランザクション内。終了時に自動リセットされるので、プールから同じ接続を後続が borrow しても安全。
+- グローバルデータしか触らない読み取り（トレンド・検知・エビデンス）はテナント変数を立てなくてよいが、ウォッチリスト等テナント単位の読み書きが混じるリクエストでは必ず立てる。
 
-### 「OIDC を使うが DB は直接接続」の整理
+## 秘匿情報の保管: Secret Manager（BYOK）
 
-- 認証は汎用 OIDC プロバイダ（例: Identity Platform / Cognito / Auth0）に委譲し、JWKS による署名検証・パスワードハッシュ・メール認証・OAuth プロバイダ連携などはタダ乗りできる
-- ただし DB アクセス側は Node API の直接接続に統一し、DB 側で JWT クレームを参照するパターンには乗らない
-- 「認証は OIDC に委ねるが、DB は直接接続でアプリ層がテナントを解決する」というハイブリッド構成
+LLM（Gemini）API キーは BYOK で、**平文で DB に置かない**。
 
-## 秘匿情報の保管: Secret Manager
-
-API キー（Redmine API Key、GitHub PAT、Gemini API Key など）は **平文で `destinations.config` に置かない**。
-
-### しくみ
-
-- シークレットは Secret Manager（AWS Secrets Manager / GCP Secret Manager）に保管する
-- DB には実体ではなく**参照（リソース名 + バージョン）だけ**を持たせる
-- 復号・取得は DB 関数ではなく**アプリ層が IAM 権限で実行**する
-
-### スキーマ参照
-
-`destinations.secret_ref text` で Secret Manager のシークレット（リソース名 / バージョン）を参照:
+- キー実体は Secret Manager（GCP / AWS）に保管。
+- DB（`tenant_settings.llm_secret_ref`）には**参照（リソース名 + バージョン）だけ**を持つ。
+- 復号・取得は**アプリ層が IAM 権限で実行**。
 
 ```sql
--- 起票時の API キー取得（DB は参照文字列のみを返す）
-SELECT secret_ref
-  FROM destinations
- WHERE id = $1;
--- 実体は Node API が secret_ref を使い、IAM 権限で Secret Manager から取得・復号する
+SELECT llm_secret_ref FROM tenant_settings WHERE tenant_id = current_setting('app.tenant_id', true)::uuid;
+-- 実体は Node が secret_ref を使い IAM 権限で Secret Manager から取得・復号する
 ```
 
-テナント越境の読出し防止は二段で担保する: ①`secret_ref` を含む `destinations` 行は RLS で保護され、現テナントのセッション変数経由でしか取得できない、②アプリ層は「解決した destination 行に紐づく `secret_ref`」しか Secret Manager へ問い合わせない、というチョークポイントを置く。
+二段防御: ①`tenant_settings` 行は RLS で現テナントしか引けない、②アプリ層は「解決したテナント設定に紐づく `secret_ref`」しか Secret Manager に問い合わせない。さらに ③ **Secret Manager IAM を最小権限**にし、サービスが読めるのは自プロジェクトの BYOK 用 prefix（例: `byok-<tenant_id>-*`）に限定する。`llm_secret_ref` は admin の自由入力（`text`）なので、**保存時にこの prefix を検証**し、任意のリソース名で他プロジェクト / 他テナントのシークレットを参照させない。
 
-### 面接で語る点
+## Elasticsearch のテナント分離（プライベートソース向け・fast-follow）
 
-> 「マルチテナント環境で API キー等を平文保管するのは情報漏洩リスクが高い。Secret Manager に暗号化保管し、DB には参照（`secret_ref`）だけを置く。復号はアプリ層が IAM 権限で行い、参照元の `destinations` 行は RLS 保護下にあるため、現テナントの destination 経由でしか辿れない。RLS とアプリ層チェックで二重防御」
+MVP の `documents` は**グローバル公開コーパス**でテナント分離不要。プライベートソース（テナント自社ブログ等）を取り込む fast-follow 段階では、ES に RLS が無いため**クエリ側で分離を強制**する:
 
-## URL 設計
-
-`/t/{slug}/chat` 形式。
-
-- `slug` は推測可能だが、アクセスには認証が必須なので問題なし
-- サブドメイン方式（`acme.app.example.com`）は DNS 設定が面倒で MVP には過剰
-- UUID 直接露出はユーザビリティ最悪
-
-## ユーザーロール
-
-2 階層に絞る:
-
-| ロール | 権限 |
-|---|---|
-| `admin` | マスタ編集、destination 設定、未分類キューレビュー、ユーザー追加 |
-| `member` | 問い合わせ（チャット）のみ |
-
-将来 `owner` / `viewer` を増やす余地はあるが、MVP では 2 階層で十分。
-ロールは `user_tenants.role` 列で表現し、API 側はミドルウェアの認可ガード（`TenantAdmin` ポリシー相当）で分岐する。
-
-## Elasticsearch のテナント分離
-
-全文検索を Elasticsearch（ES）に寄せる場合、**ES には RLS が無い**。テナント分離は DB と同じ「フィルタ忘れ＝漏洩」の構造になるため、検索層で強制する。
-
-設計:
-
-- **単一共有インデックス + `tenant_id` フィルタ**を採用する。index-per-tenant は採用しない（schema-per-tenant を採らないのと同じ理由: インデックス数がテナント数倍になり管理不能）
-- 全 ES クエリに `filter: { term: { tenant_id } }` を**必須注入**する。検索層のチョークポイント（1 関数）に集約し、呼び出し側が直接 ES を叩く経路を作らない
-- `routing` も `tenant_id` を使い、シャード局所性とフィルタを一致させる
-- フィルタ忘れ＝即漏洩なので、フィルタ注入を担う 1 関数に対してテナント分離テストを書く（[13_testing_strategy.md](13_testing_strategy.md) の ES テナント分離テストに接続）
+- 単一共有インデックス + **`tenant_id` フィルタ必須**（index-per-tenant は採らない）。
+- グローバル文書（`tenant_id` なし）+ 自テナント文書のみを返すフィルタを、**検索層のチョークポイント 1 関数**に集約する。
 
 ```ts
-// 検索層の唯一の入口。ここを通さず ES を叩かせない
-function tenantScopedQuery(tenantId: string, query: QueryDsl): SearchRequest {
-  return {
-    index: "knowledge",
-    routing: tenantId,
-    query: {
-      bool: {
-        filter: [{ term: { tenant_id: tenantId } }],
-        must: [query],
-      },
-    },
-  };
+// 検索層の唯一の入口。private 文書はテナント、public 文書は誰でも可。
+function visibleDocsQuery(tenantId: string | null, query: QueryDsl): SearchRequest {
+  const tenantFilter = tenantId
+    ? { bool: { should: [{ bool: { must_not: { exists: { field: "tenant_id" } } } },
+                         { term: { tenant_id: tenantId } }] } }
+    : { bool: { must_not: { exists: { field: "tenant_id" } } } }; // 未ログインは public のみ
+  return { index: "documents", query: { bool: { filter: [tenantFilter], must: [query] } } };
 }
 ```
 
-匿名ウィジェット経由の ES 検索も同様に、公開鍵検証で解決したテナント ID を `tenant_id` フィルタとして強制注入する（`app.widget_tenant_id` で解決したテナントを ES フィルタにも渡す）。ログイン経路と匿名経路でフィルタ注入関数を共有し、どちらも `tenant_id` 必須を満たす。
+- **迂回の静的禁止**: 生 ES クライアント（`@elastic/elasticsearch`）はラッパモジュール内に閉じ込め、`visibleDocsQuery` を通らないクエリを lint（`no-restricted-imports` 等）で禁止する。「唯一の入口」をコメントの約束でなくアーキ境界で担保する（[13_testing_strategy.md](13_testing_strategy.md) はチョークポイント関数を検証するが、迂回経路が無いことは静的解析で担保）。
+
+## URL 設計
+
+`/t/{slug}/...`（例: `/t/acme/trends`、`/t/acme/watchlists`）。slug は推測可能だがアクセスには認証必須。グローバルなトレンド閲覧は認証済みなら全テナント共通の読み取り。
+
+## ユーザーロール
+
+| ロール | 権限 |
+|---|---|
+| `admin` | ウォッチリスト管理、BYOK 設定、プライベートソース管理、検知のレビュー（confirm/dismiss） |
+| `member` | トレンド・検知・エビデンスの閲覧、ウォッチリスト閲覧 |
+
+`user_tenants.role` で表現し、API は認可ガードで分岐。
+
+- **member の書込拒否はサーバ側 403 が一次防御**、UI 非表示は UX に過ぎない（RLS は admin/member を区別しないため、書込制御はアプリ層の認可ガードが頼り）。BYOK 設定・（プライベート）ソース管理・検知 confirm/dismiss の各 write エンドポイントに admin ガードを必須にする。
+- **特権操作の監査ログ**: BYOK 変更・ソース登録 / 変更・検知レビュー・グローバルデータ書込は監査ログに残す（インシデント時に「誰がどの URL をソース登録したか」を追える）。
+- **レート制限**: 認証済み API、特に F3 要約生成（LLM コスト）と BigQuery 読み（スキャン課金）に **per-tenant / per-user レート制限 + F3 の日次上限**を MVP から入れる（金銭 DoS 防止）。
+
+## 収集コンプライアンス（robots / ToS）
+
+クロールは「他者サイトへのアクセス」なので、認証・テナント分離とは別軸の**合法性**が要る。robots 遵守・レート制御・派生データのみ保存（本文全文を持たない）の方針は [07_data_strategy.md](07_data_strategy.md)、ソース別の robots / レート設定の保持は [06_destinations.md](06_destinations.md)（Source Adapter）と `sources` テーブルで管理する。
+
+## 収集物は信頼できない入力（untrusted input）
+
+収集対象の HTML・フィード・記事本文・テナントが登録する URL は**すべて信頼できない入力**として扱う。認証・テナント分離とは独立した第一級のリスクで、スクレイピング型プロダクトの肝。
+
+| リスク | 経路 | 対策（設計の必須要件） |
+|---|---|---|
+| **SSRF** | テナント admin がプライベートソース URL（`sources.config`）を登録 → 収集ワーカーがサーバ側から fetch | `FetchContext` で **scheme は http(s) のみ / DNS 解決後の IP がプライベート・ループバック・リンクローカル（`169.254.0.0/16`・`fc00::/7`・`127.0.0.0/8` 等）なら拒否 / クラウドメタデータ（`169.254.169.254`）を明示ブロック / リダイレクト先も再検証**。[06_destinations.md](06_destinations.md) |
+| **プロンプトインジェクション** | 悪意ある記事の指示が F3 要約のスニペット経由で Gemini に混入 → グローバル `summaries` 汚染で全テナント配信 | スニペットを **untrusted データとして明確にデリミット**、システム指示文で「データ部の指示には従わない」を固定、出力をヒューリスティック検査。[05_search_classification.md](05_search_classification.md) F3 |
+| **stored XSS** | 抽出スニペット / タイトル / `url` を F6 ドリルダウンで表示 | 抽出テキストはプレーンテキスト化して保存、UI はエスケープ描画（`dangerouslySetInnerHTML` 禁止）、`url` は http(s) のみ許可しリンク化（`javascript:` を弾く） |
+| **ReDoS** | 用語抽出の正規表現に攻撃者制御の本文を流す | linear-time エンジン（RE2 / `re2`）か**タイムアウト付き実行 + 入力長上限**。破滅的バックトラックを作らない |
+
+「収集物 = 信頼できない入力」で括れる横断方針。各リスクの回帰テストは [13_testing_strategy.md](13_testing_strategy.md) に置く。
 
 ## RLS のテスト戦略
 
-ポリシーバグはサイレント漏洩につながる。**E2E テストで明示確認**:
+ポリシーバグはサイレント漏洩。**E2E で明示確認**:
 
-1. テナント A のユーザー作成、テナント A のナレッジを作成
-2. テナント B のユーザー作成、テナント B のナレッジを作成
-3. テナント A ユーザーでログイン → テナント B のナレッジが見えないことを確認
-4. SELECT / INSERT / UPDATE / DELETE すべてに対してテスト
-5. 加えて **`SET LOCAL app.tenant_id` を発行しない状態で接続したときも全テーブルが空に見える** ことを確認（フェイルセーフ検証）
+1. テナント A / B のユーザー・ウォッチリストを作成。
+2. A でログイン → B のウォッチリスト / 設定が SELECT/INSERT/UPDATE/DELETE のいずれでも見えないことを確認。
+3. **`SET LOCAL app.tenant_id` 未発行で接続したとき、テナント単位テーブルが空に見える**ことを確認（フェイルセーフ）。
+4. グローバルデータ（用語・検知）は全テナントから読めることを確認。
 
-実装は testcontainers（Node）で本物の Postgres を立て、`portfolio_app` で接続して検証する。
-ケース定義は人間が決め（漏れたら漏洩）、テストコード自体は AI 委譲で良い。E2E 全体の位置づけは [13_testing_strategy.md](13_testing_strategy.md) を参照。
+実装は testcontainers（Node）で本物の Postgres を立て、`portfolio_app` で接続して検証（[13_testing_strategy.md](13_testing_strategy.md)）。
 
-面接で語る:
+## マネージド前提とセルフホストへの寄せ方
 
-> 「RLS ポリシーは書き間違うと漏洩につながるため、テナント間で他テナントのデータが SELECT/INSERT/UPDATE/DELETE のいずれでも見えないことを E2E で明示テストした。セッション変数未設定時にも空集合になることを確認する『フェイルセーフ』ケースも入れている」
-
-## 埋め込みウィジェット経由のアクセス
-
-`embed.js` ウィジェットは **匿名アクセス**（テナントの自社サイト訪問者）。
-
-設計:
-
-- `tenant_public_keys` テーブルに公開鍵（ハッシュ）を保管
-- リクエストヘッダで公開鍵検証
-- `allowed_origins` で CORS 制限
-- `rate_limit_rpm` で過剰利用防止
-- 認証不要だが、書き込み権限は限定（読み取り＋分類検索＋未分類キュー登録のみ）
-
-公開鍵経由のアクセスは別 RLS ポリシーで扱う。アプリ層で公開鍵検証後、別のセッション変数を立てる:
-
-```sql
-CREATE POLICY public_widget_read ON knowledge_entries
-  FOR SELECT
-  USING (
-    tenant_id = current_setting('app.widget_tenant_id', true)::uuid
-  );
-```
-
-Node API 側で公開鍵検証後 `SET LOCAL app.widget_tenant_id = ?` でテナント ID をセットする。`app.tenant_id` と `app.widget_tenant_id` を別変数にしておくと、ログイン済みユーザーと匿名ウィジェットの混線が起きない。
-
-> ウィジェット実装自体は Phase 2 送り。MVP では `tenant_public_keys` テーブルとポリシーの骨格だけ用意する。
-
-## マネージドサービス前提とセルフホストへの寄せ方
-
-本ドキュメントはマネージドサービス（Cloud SQL / RDS + Identity Platform 等の OIDC + Secret Manager）を前提に書く。AWS / GCP のどちらでも成立し、Docker / Kubernetes で可搬。
-
-セルフホスト（自前 Postgres / 自前 OpenSearch）へ寄せる場合に増える運用を Phase 2 課題として整理しておく:
-
-- OIDC プロバイダ → 自前の認証基盤（または OSS の OIDC サーバ）を運用し、JWKS のローテーションを自前で回す
-- Secret Manager → 自前のシークレット管理（KMS + 暗号化保管、または OSS の Vault 系）を構築・運用
-- マネージド検索 → OpenSearch を自前運用（ノード管理・スナップショット・アップグレード）
-
-これらの自前運用はコア機能の実装時間を奪うため、MVP ではマネージドに倒す。採用面接では「セルフホストも検討したが、認証 / シークレット / 検索基盤の自前運用は採用訴求にならず、コア機能の実装時間を奪うためマネージドサービスに倒した」と語れる材料にする。
+マネージド（Cloud SQL / RDS + Identity Platform 等 OIDC + Secret Manager）前提で書く。AWS / GCP どちらでも成立し Docker / Kubernetes で可搬。セルフホスト化で増える運用（自前 OIDC の JWKS ローテーション / 自前シークレット管理 / OpenSearch 自前運用）は Phase 2 課題として整理し、MVP はマネージドに倒す。

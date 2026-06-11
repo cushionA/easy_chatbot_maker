@@ -15,6 +15,7 @@ concurrency:
 jobs:
   backend:
     name: backend (.NET 8)
+    if: false  # 旧 .NET。実コードが Node へ移るまで無効化（Sprint 2 で Node ジョブへ置換、削除はしない）
     runs-on: ubuntu-latest
     defaults:
       run:
@@ -66,6 +67,7 @@ jobs:
 
   docker-build:
     name: docker images build
+    if: false  # 旧イメージ（backend .NET 等）。Sprint 2 で apps/api・apps/web の新イメージビルドへ置換
     runs-on: ubuntu-latest
     needs: [backend, embedding]
     steps:

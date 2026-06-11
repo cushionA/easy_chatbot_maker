@@ -1,155 +1,67 @@
-# 10. 既存 Streamlit 版（helpdesk_bot）からの流用・発展
+# 10. 旧チャットボット設計からの流用マッピング
 
-## 既存版の位置
+先行して設計していた **RAG チャットボット（社内ナレッジ起票補助）platform** から、TrendScope へ「何を引き継ぎ、何を差し替え、何を捨てたか」を整理する。本書は新規ドメイン設計ではなく、**設計資産の継承関係**を示すものである。
 
-| 項目 | 内容 |
-|---|---|
-| パス | `C:\Users\tatuk\Desktop\チャットボット\helpdesk_bot` |
-| 役割 | PoC（概念検証） |
-| 本格 Web 版での扱い | 「PoC → 本格 Web 版への発展」のストーリー資産 |
+## 転用の経緯
 
-## ファイル別マッピング
+当初は社内ナレッジ起票補助の RAG チャットボットを、転職ポートフォリオの評価対象として設計していた。入社が確定しポートフォリオ評価の縛りが外れたため、目的を「転職アピール用の体裁」から「**入社後の実務に直結するスキルの実証・予習**」へ振り直した（[01_overview.md](01_overview.md)）。その結果、入社先の技術スタック（TypeScript / Node.js / Docker / Kubernetes / BigQuery、マルチクラウド）に全振りし、加えて **ML 推論** と **クローリング** を主役級の題材に据えて再ピボットした。
 
-### `app.py` — Streamlit エントリ
+この再ピボットで重要なのは、**横断インフラ（土台）はほぼそのまま使え、差し替えたのはドメインだけ**だった点である。RLS によるマルチテナント分離、OIDC、Secret Manager、Elasticsearch、BigQuery、Docker / K8s、CI、テスト戦略、BYOK、Source / Destination の Adapter パターン — これらは「チャットボット」固有ではなく「マルチテナント型データプロダクト」共通の土台である。チャットボットの頭（問い合わせ分類・起票）を外し、クロール収集 + トレンド検知の頭に付け替えた。
 
-| 機能 | 移行先 |
-|---|---|
-| Phase 管理（CATEGORY/CLASSIFY/COLLECT/CONFIRM/DONE） | React のページ・コンポーネント階層に再構成 |
-| `session_state` | React の state + Node API のコンテキスト |
-| サイドバー（ナレッジ再読込・統計） | 管理画面の独立ページに分離 |
-| カテゴリバー | 共通ヘッダーコンポーネント |
+> PoC だった Streamlit 版 helpdesk_bot は、もはや本サービスの基盤ではない。そこからのコード流用ストーリー（Excel マスタ・動的フォーム・起票本文生成）は廃止し、本書では**横断インフラの継承**のみを扱う。
 
-**設計上の発展**：
-- 単一セッションのフロー → マルチユーザー・マルチテナント対応
-- session_state 整合性チェック → 認証・テナントスコープで自動担保
+## 流用マッピング（土台 / ドメイン / 捨てたもの）
 
-### `config.py` — 設定
-
-| 既存 | 新設計 |
-|---|---|
-| `data.xlsx` の `settings` シートで設定値管理 | 環境変数（.env）で管理 |
-| `MOCK_MODE` | テスト用フラグとして継承 |
-| `EMBEDDING_MODEL_NAME` 等 | テナント別ではなく**システム全体で1つ**（embedding_model 列で行単位混在は許容） |
-| `REDMINE_*` 設定 | `destinations` テーブルでテナント別管理 |
-
-### `knowledge.py` — マスタ管理
-
-| 機能 | 流用度 | 新設計 |
+| 区分 | 旧設計（RAG チャットボット） | TrendScope での扱い |
 |---|---|---|
-| `load_knowledge` / `load_fields` / `load_categories` / `load_validations` | パース部分は流用 | Excel → DB INSERT に変更 |
-| `get_categories` / `get_category_maps` | UI 用ヘルパ | TypeScript で同等機能 |
-| `filter_by_category` | カテゴリで絞込 | SQL `WHERE category_id = ?` で代替 |
-| `get_embedding_model` | SentenceTransformer ロード | FastAPI 推論サーバに移管 |
-| `build_embeddings` | embedding 生成 | FastAPI が担当 |
-| `load_all_embeddings` / `filter_embeddings` | キャッシュ管理 | Elasticsearch に保存・kNN で検索 |
-| `parse_required_info` | カンマ区切りパース | DB は `text[]` 配列で持つ、パース不要 |
-| `get_fields_for_issue` | カテゴリ必須＋問題別必須の結合 | **ロジック流用**、`required_field_codes` 配列の結合に変更 |
+| **流用したもの（土台 = そのまま）** | マルチテナント RLS（`SET LOCAL app.tenant_id` + `FORCE ROW LEVEL SECURITY` + フェイルセーフ） | **そのまま流用**。テナント単位テーブルが `inquiries` → `watchlists` / `tenant_settings` に変わっただけ（[04_security_multitenant.md](04_security_multitenant.md)） |
+| | OIDC（JWT / JWKS 検証 → `user_tenants` 照合をアプリ層で完結） | **そのまま流用**。認証フローは不変 |
+| | Secret Manager（BYOK の LLM キーは参照のみ DB 保持・実体は外部） | **そのまま流用**。`tenant_settings.llm_secret_ref` |
+| | Elasticsearch（BM25 + kNN・kuromoji・TS クライアント） | **そのまま流用**。用途が「分類候補検索」→「エビデンス文書検索 + 関連トピック」に変化 |
+| | BigQuery（DWH） | **役割を拡張して流用**。旧設計では補助的、新設計ではトレンド・検知の主役（出現ファクト + 日次集計） |
+| | Docker / Kubernetes（コンテナ運用・水平スケール・マルチクラウド可搬） | **そのまま流用**。スケール対象に収集ワーカーが加わった |
+| | CI（GitHub Actions）/ テスト戦略（Playwright E2E + Vitest、RLS 越境の E2E 検証） | **そのまま流用**。回帰対象に「検知ロジック」が加わった（[02_architecture.md](02_architecture.md)） |
+| | BYOK（Gemini を必須依存にせずプラガブル化） | **そのまま流用**。用途が「分類フォールバック」→「技術サマリ生成（F3）」に変化 |
+| | Adapter パターン + DI（差し替え可能な外部接続の抽象化） | **構造を流用、向きを反転**。`ITicketDestination`（出力）→ `SourceAdapter`（入力）。詳細は次節 |
+| | 2 ロール分離（`portfolio_owner` / `portfolio_app` NOBYPASSRLS） | **そのまま流用** |
+| **差し替えたもの（ドメイン）** | 問い合わせ分類フロー（Embedding + BM25 + match_count + LLM の多段分類） | **削除**。代わりに「用語抽出 → 正規化 → 出現集計 → ライフサイクル検知（新出 / 急上昇 / 廃れ）」（[05_search_classification.md](05_search_classification.md)） |
+| | ナレッジマスタ（`knowledge_entries`）＝検索対象 | **差し替え**。`terms` / `term_aliases`（用語辞書 F9）+ ES `documents`（収集文書） |
+| | 起票（`destinations` / Redmine / GitHub Issues への書き出し）＝出力先 | **差し替え**。`sources`（収集元）＝入力。プロダクトの向きが「出力」から「収集」へ反転 |
+| | LLM の役割：問い合わせの分類 | **差し替え**。LLM の役割：用語の技術サマリ生成（RAG）+ 曖昧性解消の補助 |
+| | データの量的中心：問い合わせ・起票レコード | **差し替え**。データの量的中心：出現ファクト（BigQuery `occurrences`） |
+| **捨てたもの** | 3 段階エスカレーション（自動回答 / ガイダンス / 直接起票） | **廃止**。チャットボット固有の概念で TrendScope に対応物なし |
+| | 動的フォーム（テーブル駆動の `<DynamicField>` + 型別バリデーション） | **廃止**。起票画面が無いため不要 |
+| | 埋め込みウィジェット（`<script>` 1 行で自社サイトに常駐するチャット UI） | **廃止**。対人チャット UI 自体が無い |
+| | 未分類キュー（`unclassified_queue`） | **廃止**。誤検知レビューは `detections.status`（confirmed / dismissed）で代替（[05_search_classification.md](05_search_classification.md)） |
+| | Streamlit PoC（helpdesk_bot）からのコード・デモデータ流用 | **廃止**。Excel マスタ・session_state・Ollama 呼び出し等は一切引き継がない |
 
-### `classifier.py` — 分類ロジック
+## Adapter パターンの「向きの反転」
 
-| 機能 | 流用度 | 新設計 |
-|---|---|---|
-| `build_query` | 直近3発言結合 | **そのまま流用**（TypeScript 移植） |
-| `search_by_embedding` | コサイン類似度 Top-K | Elasticsearch の kNN に置換 |
-| `classify`（Embedding 主・LLM フォールバック） | ロジックの骨子は流用 | **BM25 + Embedding + match_count + LLM の4段に発展** |
-| `get_candidate_with_solution` | 候補に解決方法付与 | `auto_resolution` / `guidance_message` の2列に分離 |
-| MOCK_MODE 部分 | テスト用 | テスト時のみ使用 |
-
-**設計上の発展**：
+旧設計の中核資産だった Adapter パターンは、**抽象化の構造はそのまま、データの向きだけ反転**して流用した。これが「土台は同じ、ドメインだけ違う」を最も端的に示す。
 
 ```
-[既存]
-Embedding 検索 → top1 >= 閾値 ? Embedding 結果 : LLM フォールバック
-
-[新]
-キーワード完全一致 → ヒット ? 確定 : ↓
-BM25 + Embedding ハイブリッド RRF → match_count 重み → top1 >= 閾値 ? 候補提示 : ↓
-LLM フォールバック（BYOK 時のみ） → 該当なし ? 未分類キュー : 候補提示
+[旧: 出力 Adapter]                      [新: 入力 Adapter]
+ITicketDestination                       SourceAdapter
+  ├ RedmineDestination                     ├ github-api-source
+  └ GitHubIssuesDestination                ├ hackernews-api-source
+                                           ├ qiita-api-source
+  分類結果 → 外部チケットへ「書き出す」      └ github-trending-crawl-source
+  フィールドマッピングは JSONB             外部 Web から「収集する」
+                                           HTTP の作法は FetchContext に集約
 ```
 
-### `forms.py` — 動的フォーム
+- 共通点: インターフェースで外部接続を抽象化し、DI / レジストリで `kind` から実装を解決、設定は JSONB（`config`）で柔軟に持つ。新接続先は「実装 1 つ + 設定行」で増やせる。
+- 相違点: 旧は**1 件を外部へ送る**（冪等・即時）。新は**多数を外部から取る**（長時間・部分失敗前提・礼儀正しさが要る）。このため新設計では `FetchContext`（robots 遵守・レート制御・条件付き GET・指数バックオフ・必要時 Playwright）という共通チョークポイントを Adapter から切り出した（[06_destinations.md](06_destinations.md)）。
 
-| 機能 | 流用度 | 新設計 |
-|---|---|---|
-| `render_field`（型別ウィジェット分岐） | ロジック流用 | React コンポーネント (`<DynamicField>`) に再構成 |
-| `pd_isna` | NaN 判定 | TypeScript では null/undefined で代替、不要 |
-| `render_form` | フォーム全体描画 | React フォーム（react-hook-form）+ zod |
-| `validate_field`（型別バリデーション） | **ロジック流用**（TypeScript 移植） | + `is_multi` フィールド対応追加 |
-| `validate_form` | 全フィールドバリデーション | 同上 |
-| `format_collected_info` | 表示用フォーマット | 起票本文（Markdown）生成に統合 |
+## データ最小化方針の継承と強化
 
-**設計上の発展**：
-- `is_multi` フラグで複数値入力対応（行追加 UI）
-- バリデーションはサーバ側でも再検証（クライアント信頼しない）
+旧設計の「データ最小化（起票本文は外部チケット側が真の保管先、当方はメタのみ保持）」という方針は、TrendScope で**合法性の一級市民**へ昇格した。
 
-### `llm_client.py` — LLM 呼出
-
-| 機能 | 流用度 | 新設計 |
-|---|---|---|
-| `build_llm_master_text` | マスタの整形 | **そのまま流用**（TypeScript 移植） |
-| `build_system_prompt` | システムプロンプト組立 | **プロンプトはそのまま流用** |
-| `classify_mock` | MOCK_MODE 用 | テスト用 |
-| `classify` | Ollama API 呼出 | **Gemini API 呼出に置換**（HTTP 直接） |
-| `classify_with_retry` | リトライラッパ | TypeScript のリトライ（指数バックオフ）で実装 |
-| `Pydantic ClassificationResult` | 構造化出力スキーマ | **TypeScript の型 + zod**で同等 |
-
-**設計上の発展**：
-- Ollama（ローカル）→ Gemini API（クラウド、BYOK）
-- LLM 呼出は **`Shared.LLM` ラッパ**（将来 Groq 等への切替容易）
-
-### `redmine_client.py` — Redmine 起票
-
-| 機能 | 流用度 | 新設計 |
-|---|---|---|
-| `build_description` | フォーム値の Markdown 化 | **そのまま流用**（TypeScript 移植） |
-| Redmine REST API 呼出 | API 呼出パターン | `RedmineDestination` Adapter として再実装 |
-| MOCK_MODE 部分 | テスト用 | テスト用 |
-
-**設計上の発展**：
-- 単独ファイル → `ITicketDestination` インターフェース実装の1つ
-- GitHub Issues Adapter が並列で増える
-- API キーは Secret Manager 経由で取得
-
-### `models.py` — データモデル
-
-| 既存 | 新設計 |
+| 旧設計 | TrendScope |
 |---|---|
-| `Candidate` / `ClassificationResult` (Pydantic) | TypeScript の型で同等定義 |
+| 起票本文は Redmine / GitHub 側が source of truth、当方は ID + URL + メタのみ | 収集文書の本文全文は相手サイトが source of truth、当方は**派生データのみ**（用語頻度・メタ・短いスニペット・embedding・要約）。本文は抽出後破棄 |
+| 動機: DB 軽量化 + GDPR 削除要求の転送 | 動機: 上記に加え **著作権法 30 条の 4（情報解析利用）+ robots / ToS 遵守**という収集の合法ライン（[07_data_strategy.md](07_data_strategy.md)） |
 
-## データファイル
+## まとめ
 
-| 既存 | 新設計 |
-|---|---|
-| `data/data.xlsx`（knowledge/field_types/categories/validations/settings） | テナント別 DB レコードに移行 |
-| 採用面接用デモデータ | 既存 `data.xlsx` をデモテナントの初期データに使う |
-
-**デモテナント用に、既存 `data.xlsx` の中身をそのまま流用してインポートする**。リアリティのあるデモデータが既にある = ポートフォリオ的アドバンテージ。
-
-## ロジック資産まとめ
-
-| 既存ロジック | 新設計での扱い |
-|---|---|
-| **Embedding 検索 + LLM フォールバック戦略** | 戦略の妥当性は検証済み、本格 Web 版で「ハイブリッド検索 + LLM フォールバック」に進化 |
-| **構造化出力のスキーマ設計**（Pydantic） | TypeScript の型に 1:1 移植 |
-| **動的フォーム + バリデーション設計** | テーブル駆動の設計思想を継承 |
-| **カテゴリ別必須情報 + 問題別必須情報の結合** | `required_field_codes` 配列の結合ロジックで継承 |
-| **MOCK_MODE** | テストモードとして継承 |
-| **チャット履歴連結クエリ** | 直近3発言結合をそのまま流用 |
-| **Markdown 化した起票本文** | `build_description` ロジックそのまま |
-
-## 面接の語り筋
-
-> 「最初に Streamlit 版で PoC を作り、**Embedding + LLM フォールバック**という分類戦略の妥当性、**Excel 駆動の動的フォーム生成**の手応え、**カテゴリ別+問題別の必須情報結合**のロジックを検証した。
->
-> 本格 Web 版では、PoC で固まった戦略を **TypeScript / Node.js（React + Node API）** に載せ替え、以下を追加した：
->
-> - **マルチテナント設計**（RLS + Secret Manager + OIDC/JWT）
-> - **ハイブリッド検索**（BM25 を加えて Embedding 単独の弱点を補完）
-> - **3段階エスカレーション**（自動回答 / ガイダンス / 直接起票）
-> - **複数起票先の抽象化**（Adapter パターン）
-> - **埋め込みウィジェット**（テナント自社サイトに埋込可能）
-> - **BYOK LLM 設計**（コスト爆発を回避）
->
-> Streamlit では本質的に厳しかった **マルチテナント・本物のセッション管理・同時接続** が解決された。」
-
-このストーリーが採用面接での **「実プロダクトを段階的に発展させた経験」** の証明になる。
+TrendScope は「ゼロから作った別物」ではなく、「**RAG チャットボット platform の横断インフラを土台に、ドメインだけクロール + トレンド検知へ差し替えたもの**」である。土台（RLS / OIDC / Secret Manager / ES / BigQuery / Docker・K8s / CI / テスト / BYOK / Adapter）の再利用が、再ピボットを短期で成立させた。面接では「**マルチテナント型データプロダクトの土台は同じで、頭だけ載せ替えられる設計にしてあった**」点が、設計の汎用性・再利用性の証明になる（[12_interview_narratives.md](12_interview_narratives.md)）。

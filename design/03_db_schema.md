@@ -1,54 +1,49 @@
-# 03. DB スキーマ
+# 03. データモデル（3 層）
 
-## エンティティ全体図
+データは 3 層に分ける。**Postgres = エンティティ / 設定（編集の source of truth・RLS の対象）**、**Elasticsearch = 文書（エビデンス検索・関連トピック）**、**BigQuery = 出現ファクト + 日次集計（トレンド・検知の素）**。役割分担の根拠は [07_data_strategy.md](07_data_strategy.md)。
 
 ```
-users (内部 uuid + OIDC sub、JIT プロビジョニング)
-    │
-    └─< user_tenants >─── tenants ─────┐
-                                       │
-       既存Excelから移行 ──────────────┤
-                                       ├─< categories
-                                       ├─< validation_rules
-                                       ├─< field_definitions
-                                       ├─< knowledge_entries（メタのみ／検索文書は ES）
-       新規追加 ───────────────────────┤
-                                       ├─< destinations（+secret参照）
-                                       ├─< inquiries（本文無し）
-                                       └─< unclassified_queue
+[PostgreSQL + RLS]                     [Elasticsearch]            [BigQuery]
+ users / tenants / user_tenants         documents                 occurrences（言及ファクト）
+ sources（収集ソース・ヘルス）            ├ title/snippet           term_metrics（採用メトリクス時系列）
+ terms / term_aliases（用語辞書 F9）      ├ term_slugs[]            daily_term_stats（日次集計）
+ term_identities（レジストリ対応付け）     └ embedding(kNN)          （+公開DS: GitHub Archive 等）
+ detections（検知 F2）                    = F6 エビデンス/関連トピック
+ summaries（要約 F3 キャッシュ）
+ tenant_settings / watchlists（テナント）
 ```
 
-Postgres は構造化メタ（編集の source of truth）を保持する。全文・ベクトル検索は Elasticsearch が担当し、`knowledge_entries` の書込時に ES へ upsert 同期する（ES マッピングは後述「Elasticsearch インデックス」節を参照）。
+**言及（mentions）と採用（metrics）は別ファクトとして持つ**（[14_data_sources.md](14_data_sources.md) の実地調査を反映）。HN/Qiita/dev.to/SO/Lobsters/GitHub Trending が生む「言及」は `occurrences`（文書に紐づく離散イベント）、npm/PyPI/crates.io の DL 数や GitHub Archive のスター数は「採用」の連続時系列で `term_metrics` に入れる。DL 数を言及に混ぜると `share` / `distinct_sources` が壊れる（react の週 1.3 億 DL は mention ではない）。
 
-## テーブル定義
+グローバル（共有）データはテナント非依存。テナント単位は `tenant_settings` / `watchlists` / プライベート `sources` のみ（**軽量マルチテナント**）。
+
+---
+
+## Postgres テーブル
 
 ### `users` — ログインユーザー（OIDC sub 保持）
 
-内部 ID は uuid で発番し、OIDC（OpenID Connect）の `sub`（プロバイダ依存の不透明文字列で UUID とは限らない）は一意キーとして別に保持する。初回ログイン時に `oidc_sub` で upsert する JIT（Just-In-Time）プロビジョニングで挿入する。
+内部 ID は uuid で発番し、OIDC の `sub`（プロバイダ依存の不透明文字列・UUID とは限らない）は一意キーとして別に保持する。初回ログイン時に `oidc_sub` で upsert する JIT プロビジョニング。
 
 ```sql
 CREATE TABLE users (
-  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),  -- 内部ID（FK はこれを参照）
-  oidc_sub    text UNIQUE NOT NULL,                          -- OIDC の sub（不透明文字列、UUID とは限らない）
+  id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  oidc_sub    text UNIQUE NOT NULL,
   email       text,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
 ```
 
-### `tenants` — 組織
+### `tenants` / `user_tenants`
 
 ```sql
 CREATE TABLE tenants (
   id          uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  slug        text UNIQUE NOT NULL,   -- URL用: /t/acme/chat
-  name        text NOT NULL,           -- 表示名
+  slug        text UNIQUE NOT NULL,   -- /t/acme/...
+  name        text NOT NULL,
   created_at  timestamptz NOT NULL DEFAULT now()
 );
-```
 
-### `user_tenants` — メンバーシップ（多対多）
-
-```sql
 CREATE TABLE user_tenants (
   user_id    uuid REFERENCES users(id) ON DELETE CASCADE,
   tenant_id  uuid REFERENCES tenants(id) ON DELETE CASCADE,
@@ -58,323 +53,326 @@ CREATE TABLE user_tenants (
 );
 ```
 
-`admin`：マスタ編集・destination 設定可。
-`member`：問い合わせのみ。
+`admin`：ウォッチリスト編集・BYOK 設定・（プライベート）ソース管理可。`member`：閲覧のみ。
 
-### `categories`
+### `sources` — 収集ソース登録 + 収集ヘルス（F8）
 
-既存 Streamlit 版 `categories` シート相当。
-
-```sql
-CREATE TABLE categories (
-  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id             uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  code                  text NOT NULL,                 -- 既存の "CAT01" 相当
-  name                  text NOT NULL,
-  emoji                 text,
-  sort_order            int  NOT NULL DEFAULT 0,
-  required_field_codes  text[] NOT NULL DEFAULT '{}',  -- 旧「起票時必須情報」
-  created_at            timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, code)
-);
-```
-
-### `validation_rules`
-
-既存 `validations` シート相当。
+API / フィード / クロールの取得元。`tenant_id` が NULL なら**グローバル公開ソース**（共有コーパスを作る）、設定済みなら**テナント専用プライベートソース**。
 
 ```sql
-CREATE TABLE validation_rules (
-  id             uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id      uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  name           text NOT NULL,
-  min_length     int,
-  max_length     int,
-  regex          text,
-  error_message  text,
-  created_at     timestamptz NOT NULL DEFAULT now(),
+CREATE TABLE sources (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id     uuid REFERENCES tenants(id) ON DELETE CASCADE,  -- NULL = グローバル
+  kind          text NOT NULL CHECK (kind IN ('api','feed','crawl')),
+  name          text NOT NULL,                       -- "GitHub Trending" / "Hacker News API"
+  locale        text NOT NULL DEFAULT 'global' CHECK (locale IN ('global','jp')),
+  config        jsonb NOT NULL DEFAULT '{}',          -- endpoint / query / セレクタ等
+  -- 礼儀正しさ・コンプラ
+  robots_policy text NOT NULL DEFAULT 'respect',      -- robots 方針メモ
+  rate_limit_rpm int NOT NULL DEFAULT 20,
+  enabled       boolean NOT NULL DEFAULT true,
+  -- 収集ヘルス（F8）
+  last_run_at          timestamptz,
+  last_ok_at           timestamptz,
+  last_status          text CHECK (last_status IN ('ok','failed','parser_broken')),
+  last_error           text,
+  consecutive_failures int NOT NULL DEFAULT 0,
+  created_at    timestamptz NOT NULL DEFAULT now(),
   UNIQUE (tenant_id, name)
 );
 ```
 
-### `field_definitions`
+`last_status = 'parser_broken'`（必須フィールド欠落 / 取得件数 0）と `consecutive_failures` が F8 アラートの根拠。
 
-既存 `field_types` シート相当 + `is_multi` 新規。
+### `terms` — 正規化済み技術用語（F9 の核）
 
 ```sql
-CREATE TABLE field_definitions (
-  id                  uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id           uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  code                text NOT NULL,
-  field_type          text NOT NULL,   -- text/text_short/choice/radio/multi/date/time/datetime/number/bool/file
-  is_required         boolean NOT NULL DEFAULT false,
-  is_multi            boolean NOT NULL DEFAULT false,   -- ★複数項目フラグ
-  question            text,
-  choices             text[],
-  validation_rule_id  uuid REFERENCES validation_rules(id) ON DELETE SET NULL,
-  created_at          timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, code)
+CREATE TABLE terms (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  slug          text UNIQUE NOT NULL,         -- 正規キー: 'kubernetes'
+  display_name  text NOT NULL,                -- 'Kubernetes'
+  domain_tag    text,                          -- 粗いドメイン（language/framework/tool/infra/ai）任意・フィルタ用
+  description   text,
+  is_excluded   boolean NOT NULL DEFAULT false, -- 除外語（一般語 "app"/"data" 等）
+  disambig_note text,                          -- 曖昧性解消メモ（"Go"=言語）
+  first_seen_at timestamptz,                    -- 初出（新出検知の確定で記録）
+  created_at    timestamptz NOT NULL DEFAULT now(),
+  updated_at    timestamptz NOT NULL DEFAULT now()
 );
 ```
 
-### `knowledge_entries`（★ 最重要テーブル）
-
-既存 `knowledge` シート相当 + 多数の拡張。**構造化メタは Postgres、検索用テキストとベクトルは Elasticsearch** に持つ。Postgres 側は編集の source of truth であり、書込時に ES ドキュメントへ upsert 同期する。
+### `term_aliases` — 別名 → 正規用語（表記揺れ吸収）
 
 ```sql
-CREATE TABLE knowledge_entries (
-  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id             uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  category_id           uuid NOT NULL REFERENCES categories(id) ON DELETE CASCADE,
-  name                  text NOT NULL,                  -- 問題名
-
-  -- 検索用テキスト群（ES へ同期）
-  keywords              text[] NOT NULL DEFAULT '{}',   -- 短い検索キーワード
-  example_queries       text[] NOT NULL DEFAULT '{}',   -- ★言い換え・組織用語含む（同義語管理を統合）
-
-  -- フォーム制御
-  required_field_codes  text[] NOT NULL DEFAULT '{}',
-
-  -- 3段階エスカレーション
-  auto_resolution       text,                            -- 自動回答（あれば起票しない）
-  guidance_message      text,                            -- 起票前ガイダンス
-  -- 両方なし → 直接フォーム → 起票
-
-  -- 起票時メタ
-  ticket_priority       text NOT NULL DEFAULT 'normal'
-    CHECK (ticket_priority IN ('low','normal','high','urgent')),
-
-  -- 検索ランキング統計（トリガで更新後、ES ドキュメントへ同期）
-  match_count           int  NOT NULL DEFAULT 0,         -- 過去マッチ回数（起票成功時に+1）
-
-  created_at            timestamptz NOT NULL DEFAULT now(),
-  updated_at            timestamptz NOT NULL DEFAULT now(),
-  UNIQUE (tenant_id, name)
+CREATE TABLE term_aliases (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  term_id      uuid NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+  alias        text NOT NULL,                 -- 'k8s' / 'Kubernetes' 表記揺れ
+  locale       text,
+  is_ambiguous boolean NOT NULL DEFAULT false, -- 文脈依存（"Go"）→ 抽出時に文脈判定を要する
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (alias, locale)
 );
 ```
 
-embedding ベクトル・全文検索用テキスト・`embedding_model` は Postgres には持たず、ES ドキュメント側の概念とする（次節参照）。
+`is_ambiguous = true` の別名は、抽出時に周辺文脈（共起語）で正規用語を確定してから出現を記録する（[05_search_classification.md](05_search_classification.md)）。
 
-### `destinations` — 起票先設定
+### `term_identities` — term ↔ レジストリ識別子の対応付け
 
-```sql
-CREATE TABLE destinations (
-  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id       uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  kind            text NOT NULL CHECK (kind IN ('redmine','github_issues')),
-  name            text NOT NULL,                       -- "社内Redmine" 等
-  config          jsonb NOT NULL,                       -- URL, project_id 等の非秘匿設定
-  secret_ref      text,                                 -- Secret Manager のリソース名/バージョン
-  is_primary      boolean NOT NULL DEFAULT false,
-  field_mapping   jsonb,                                -- ticket_priority 等のサービス固有変換
-  sort_order      int NOT NULL DEFAULT 0,
-  created_at      timestamptz NOT NULL DEFAULT now()
-);
-
--- 1テナントに1つだけプライマリ
-CREATE UNIQUE INDEX destinations_one_primary_per_tenant
-  ON destinations (tenant_id) WHERE is_primary;
-```
-
-### `inquiries` — 問い合わせ履歴（メタのみ、本文無し）
-
-「**本文は外部システムにある**」という戦略の核心テーブル。
+採用メトリクス（DL 数・スター）を term に結びつけるための対応表。「react」= npm パッケージ `react` + GitHub repo `facebook/react` のように、**同一技術が複数レジストリに別 ID で存在する**ため必要（用語の表記揺れを吸収する `term_aliases` とは別物）。
 
 ```sql
-CREATE TABLE inquiries (
-  id                    uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id             uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  user_id               uuid REFERENCES users(id) ON DELETE SET NULL,
-  category_id           uuid REFERENCES categories(id),
-  matched_knowledge_id  uuid REFERENCES knowledge_entries(id),
-  raw_query             text,                            -- 自然言語入力（短いので保持）
-  destination_id        uuid REFERENCES destinations(id),
-  external_ticket_id    text,                            -- 起票先のチケットID
-  external_ticket_url   text,
-  status                text NOT NULL,                   -- created / failed / auto_resolved
-  match_strategy        text,                            -- dropdown / keyword / hybrid / llm
-  confidence_score      real,                            -- ナレッジギャップ検出用
-  resolved              boolean,                         -- 自動回答時の「解決した？」答え
-  draft_fields          jsonb,                            -- 起票失敗時の短期一時保存
-  created_at            timestamptz NOT NULL DEFAULT now()
+CREATE TABLE term_identities (
+  id           uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  term_id      uuid NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+  source       text NOT NULL,        -- 'npm' / 'pypi' / 'crates_io' / 'github_repo'
+  external_id  text NOT NULL,        -- 'react' / 'requests' / 'serde' / 'facebook/react'
+  created_at   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (source, external_id)
 );
 ```
 
-`draft_fields` は失敗時のリトライ用、起票成功時は NULL クリア。
+MVP は名前のヒューリスティック一致（slug = パッケージ名）から始め、衝突・別名（例: slug `nextjs` ↔ npm `next`）は手動で登録する。metrics 収集ワーカーはこの表を巡回リストとして使う。
 
-### `unclassified_queue` — 未分類キュー
+### `detections` — 検知イベント（F2 出力）
 
 ```sql
-CREATE TABLE unclassified_queue (
-  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id       uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  user_id         uuid REFERENCES users(id) ON DELETE SET NULL,
-  raw_query       text NOT NULL,                       -- 自然言語入力
-  freeform_body   text,                                 -- 「新規問題として」のフォーム入力
-  status          text NOT NULL DEFAULT 'pending'
-    CHECK (status IN ('pending','added_to_master','discarded')),
-  reviewed_by     uuid REFERENCES users(id),
-  reviewed_at     timestamptz,
-  review_note     text,
-  created_at      timestamptz NOT NULL DEFAULT now()
+CREATE TABLE detections (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  term_id       uuid NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+  type          text NOT NULL CHECK (type IN ('emerging','rising','declining')),
+  locale        text NOT NULL DEFAULT 'global',
+  window_start  date NOT NULL,
+  window_end    date NOT NULL,
+  score         real NOT NULL,                 -- z-score / surprise 等
+  distinct_sources int,                          -- 新出のクロスソース裏取り数
+  evidence      jsonb,                            -- 代表文書参照（doc_id/url）
+  status        text NOT NULL DEFAULT 'open'
+    CHECK (status IN ('open','confirmed','dismissed')),
+  detected_at   timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (term_id, type, locale, window_end)
 );
 ```
 
-管理画面で admin がレビュー → マスタ追加 or 破棄。
+`status` は人手レビューのフィードバック（誤検知 → `dismissed` → 除外語/別名へ反映）。
 
-## Elasticsearch インデックス
+### `summaries` — 技術サマリ（F3 キャッシュ）
 
-knowledge 検索ドキュメントは Elasticsearch（または OpenSearch）に持つ。Postgres の `knowledge_entries` 書込時に、検索対象のフィールドを ES ドキュメントへ upsert 同期する。マッピング例：
+```sql
+CREATE TABLE summaries (
+  id            uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  term_id       uuid NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+  locale        text NOT NULL DEFAULT 'global',
+  model         text NOT NULL,
+  content       text NOT NULL,
+  evidence      jsonb NOT NULL DEFAULT '[]',    -- 出典 document 参照
+  related_terms uuid[] NOT NULL DEFAULT '{}',    -- 関連トピック（embedding 近傍 / 共起）
+  generated_at  timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (term_id, locale)
+);
+```
+
+**システム既定キーで生成するグローバルキャッシュ**。`(term_id, locale)` で upsert（`model` 変更時も同キーで更新）。テナントの BYOK キーで生成する要約は**このグローバルキャッシュに保存せず**オンデマンド生成する（他テナントへの混入・コストの付け替えを防ぐ）。キーの使い分けは [05_search_classification.md](05_search_classification.md) / [04_security_multitenant.md](04_security_multitenant.md)。
+
+### `tenant_settings` — テナント設定（BYOK）
+
+```sql
+CREATE TABLE tenant_settings (
+  tenant_id      uuid PRIMARY KEY REFERENCES tenants(id) ON DELETE CASCADE,
+  llm_secret_ref text,                          -- Secret Manager リソース名（BYOK Gemini キー）
+  default_locale text NOT NULL DEFAULT 'global',
+  updated_at     timestamptz NOT NULL DEFAULT now()
+);
+```
+
+### `watchlists` / `watchlist_items` — 追跡（テナント単位）
+
+```sql
+CREATE TABLE watchlists (
+  id         uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id  uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
+  name       text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (tenant_id, name),
+  UNIQUE (id, tenant_id)            -- 子の複合 FK 用（親子のテナント一致を強制）
+);
+
+CREATE TABLE watchlist_items (
+  watchlist_id uuid NOT NULL,
+  tenant_id    uuid NOT NULL,                                          -- RLS 用に冗長保持
+  term_id      uuid NOT NULL REFERENCES terms(id) ON DELETE CASCADE,
+  added_at     timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (watchlist_id, term_id),
+  -- 親 watchlist と tenant_id が一致する組しか許さない（他テナントの watchlist にぶら下げられない）
+  FOREIGN KEY (watchlist_id, tenant_id) REFERENCES watchlists(id, tenant_id) ON DELETE CASCADE
+);
+```
+
+---
+
+## Elasticsearch インデックス（`documents`）
+
+収集した各アイテム（記事 / HN ストーリー / リリース / Trending エントリ）を 1 文書として格納。**本文全文は持たず、メタ + 短い文脈スニペット + 抽出用語 + embedding のみ**（[07_data_strategy.md](07_data_strategy.md) のデータ最小化）。
 
 ```json
 {
   "mappings": {
     "properties": {
-      "tenant_id":        { "type": "keyword" },
-      "entry_id":         { "type": "keyword" },
-      "category_id":      { "type": "keyword" },
-      "name":             { "type": "text", "analyzer": "kuromoji", "fields": { "raw": { "type": "keyword" } } },
-      "keywords":         { "type": "text", "analyzer": "kuromoji", "fields": { "raw": { "type": "keyword" } } },
-      "example_queries":  { "type": "text", "analyzer": "kuromoji" },
-      "embedding":        { "type": "dense_vector", "dims": 768, "similarity": "cosine" },
-      "embedding_model":  { "type": "keyword" },
-      "match_count":      { "type": "integer" }
+      "doc_id":       { "type": "keyword" },
+      "source_id":    { "type": "keyword" },
+      "source_kind":  { "type": "keyword" },
+      "locale":       { "type": "keyword" },
+      "url":          { "type": "keyword" },
+      "title":        { "type": "text", "analyzer": "kuromoji" },
+      "snippet":      { "type": "text", "analyzer": "kuromoji" },
+      "term_slugs":   { "type": "keyword" },
+      "embedding":    { "type": "dense_vector", "dims": 768, "index": true, "similarity": "cosine" },
+      "content_hash": { "type": "keyword" },
+      "popularity":   { "type": "integer" },
+      "published_at": { "type": "date" },
+      "fetched_at":   { "type": "date" }
     }
   }
 }
 ```
 
-`tenant_id` はインデックスの routing キーとしても利用する。
+- **`doc_id` は `source:ソース内ID` の複合キー**（例 `hackernews:8863` / `qiita:d5349e...` / `lobsters:esvncd`）。ソース内 ID の型はバラバラ（int / hex / slug）なので文字列連結で統一し、冪等 upsert のキーにする。
+- **`popularity`** はソース相対の人気度（points / likes_count / score 等）。表示とソース内ソート専用で、**ソース間の集計には使わない**。
+- **`published_at` は Adapter が UTC 正規化済み**の値（[06_destinations.md](06_destinations.md)）。GitHub Trending のように絶対日付が無いソースは取得時刻を入れる。
+- **F6 エビデンス**: 用語 → `term_slugs` で該当文書を引き、`title` / `snippet` / `url`（リンク）を出す。`snippet` は用語を含む短い文脈（上限文字数）で、本文全文ではない。
+- **関連トピック**: 用語 embedding の **kNN 近傍**、または用語の共起から算出（固定タクソノミの代替）。
+- **dedup**: `content_hash`（完全一致）+ `embedding` kNN（近重複）。
+- MVP の `documents` は**グローバル公開コーパス**で `tenant_id` を持たない。プライベートソース文書は `tenant_id` を付与しクエリでフィルタする（fast-follow、[04_security_multitenant.md](04_security_multitenant.md) の ES テナント分離節と同じ choke-point を使う）。
+- **保持期間 / 容量**: `documents`（特に 768 次元 embedding）は蓄積一方なので、`published_at` が一定期間（初期: 1 年）より古く参照の無い文書は ILM（index lifecycle management）で削除 / cold 移行する。MVP は手動 reindex で運用し ILM 自動化は Phase 2（[07_data_strategy.md](07_data_strategy.md) 保持・コスト）。
 
-完全一致（分類フロー④）は `name.raw` / `keywords.raw` の keyword サブフィールドに対する `term` クエリで行う（解析済み text フィールドでは exact 一致しないため）。
+---
 
-**全クエリは `tenant_id` でフィルタ必須**：ES には Postgres のような RLS が存在しないため、テナント分離はクエリ側で `tenant_id` フィルタを強制することで担保する（詳細は [04_security_multitenant.md](04_security_multitenant.md)）。
+## BigQuery テーブル（DWH）
 
-`embedding` は Python FastAPI 側で推論したベクトル（768 次元、cosine 類似度）を格納する。`embedding_model` はそのベクトルを生成したモデル名で、検索対象の出し分けに使う（後述「マスタモデル変更時の対応」）。
+### `occurrences` — 言及ファクト
 
-`match_count` は Postgres のトリガ（後述）で更新された後、ES ドキュメントへ同期する。
+抽出・正規化後、**言及**を 1 行 = 1（用語 × 文書）で追記する。日付パーティション + `term_slug` クラスタリングでスキャン量を抑える。1 言及 = 1 行であり、人気度（points / likes / score）は**ここに混ぜない**（ソース相対値で非可換。文書側 = ES `documents.popularity` に保持し、表示・ソース内ソートにのみ使う）。
 
-### 同期と整合性
+| 列 | 型 | 備考 |
+|---|---|---|
+| `occurred_date` | DATE | パーティションキー（文書の published_at 由来） |
+| `term_slug` | STRING | クラスタリングキー（正規化済み） |
+| `source_id` | STRING | |
+| `source_kind` | STRING | api / feed / crawl |
+| `locale` | STRING | global / jp |
+| `doc_id` | STRING | ES `documents` と対応 |
+| `weight` | FLOAT64 | **抽出位置の重み**（タイトル出現 > 本文等）。人気度ではない |
 
-Postgres（source of truth）と ES（検索）の二重書き込みになるため、整合性方針を決めておく:
+**冪等性（重要）**: BigQuery に UNIQUE 制約は無い。`occurrences` は `(occurred_date, doc_id, term_slug)` を論理キーとし、取り込みは `MERGE`（または `WHERE NOT EXISTS`）で**冪等 upsert** する。リトライ・再インデックスで同一行が二重投入されると `daily_term_stats` の `mentions` / `distinct_sources` が水増しされ検知が壊れるため、二重排除は必須。
 
-- `knowledge_entries` の作成 / 更新 / 削除時に、同一リクエスト内で ES へ upsert / delete する（ベストエフォート）。
-- ES 反映は失敗しうるため、失敗はリトライキューに積み、定期の再インデックスジョブで Postgres を真として突合・修復する（結果整合）。
-- `match_count` 更新（トリガ）も非同期で ES に反映され、検索ランキングへの反映は短時間遅延しうる。
-- 検索は ES 主、整合性が要る編集・表示は Postgres 主、と読み分ける。
+**プライベートソースの隔離**: テナント専用（プライベート）ソース由来の出現は、グローバル `occurrences` / `daily_term_stats` に**入れない**（テナントの非公開な関心が他テナントのトレンドへ漏れるのを防ぐ。fast-follow の不変条件）。
 
-## インデックス
+### `term_metrics` — 採用メトリクス時系列（言及とは別ファクト）
 
-```sql
--- 通常検索（btree）
-CREATE INDEX ON knowledge_entries (tenant_id, category_id);
-CREATE INDEX ON inquiries (tenant_id, created_at DESC);
-CREATE INDEX ON inquiries (matched_knowledge_id) WHERE matched_knowledge_id IS NOT NULL;
-CREATE INDEX ON unclassified_queue (tenant_id, status);
-```
+npm / PyPI / crates.io の日次ダウンロード数、GitHub Archive のスター付与数など、**文書を持たない連続量**。`term_identities` を巡回リストとして metrics ワーカーが取り込む。
 
-全文（BM25）・ベクトル（近似最近傍）検索は Elasticsearch が担当するため、Postgres 側に HNSW / GIN インデックスは作らない。Postgres には構造化メタへの btree インデックスのみを置く。
+| 列 | 型 | 備考 |
+|---|---|---|
+| `metric_date` | DATE | パーティションキー |
+| `term_slug` | STRING | クラスタリングキー（`term_identities` 経由で解決） |
+| `source` | STRING | npm / pypi / crates_io / github_archive |
+| `metric` | STRING | downloads / stars |
+| `value` | INT64 | 当日の値 |
+
+- 冪等キーは `(metric_date, term_slug, source, metric)`（`MERGE` で upsert）。
+- **役割分担**: `occurrences`（言及）が**発見・新出**を担い、`term_metrics`（採用）が**裏付け・急上昇の確証**を担う。「言及も DL も伸びている」が最強の rising シグナル（[05_search_classification.md](05_search_classification.md)）。
+- 絶対値はソース間で非可換なので、検知に使うのは**ソース内の変化率・傾き**のみ。
+
+### `daily_term_stats` — 日次集計（スケジュールクエリで生成）
+
+`occurrences` を集計して作る。F1 可視化・F2 検知・F5 JP/Global の読み元。
+
+| 列 | 型 | 備考 |
+|---|---|---|
+| `day` | DATE | |
+| `term_slug` | STRING | |
+| `locale` | STRING | |
+| `mentions` | INT64 | 当日の出現数 |
+| `distinct_sources` | INT64 | クロスソース裏取り（新出検知の鍵） |
+| `distinct_docs` | INT64 | |
+| `share` | FLOAT64 | mentions ÷ 当日全用語 mentions（総量正規化） |
+
+公開データセット（GitHub Archive 等）も同じ BigQuery 上にあり、必要に応じ結合できる。検知ロジックの式は [05_search_classification.md](05_search_classification.md)。
+
+---
 
 ## RLS（テナント分離ポリシー）
 
-Node のデータ層が Postgres に直接接続する構成のため、`auth.uid()` は利用しない。アプリ側で OIDC トークン → `user_tenants` 照合まで済ませ、確定した `tenant_id` を `SET LOCAL app.tenant_id = ...` でセッション変数に流す。RLS ポリシーはその変数だけを参照する（設計の根拠は [04_security_multitenant.md](04_security_multitenant.md) の「なぜ `auth.uid()` ベースにしないか」参照）。
+Node のデータ層が Postgres に直接接続する。OIDC トークン → `user_tenants` 照合までアプリ層で済ませ、確定した `tenant_id` を `SET LOCAL app.tenant_id` で流す。RLS はその変数だけを参照する（根拠は [04_security_multitenant.md](04_security_multitenant.md)）。
+
+**テナント単位テーブル**（`tenant_settings` / `watchlists` / `watchlist_items` / プライベート `sources`）に適用:
 
 ```sql
-ALTER TABLE knowledge_entries ENABLE ROW LEVEL SECURITY;
+ALTER TABLE watchlists ENABLE ROW LEVEL SECURITY;
+ALTER TABLE watchlists FORCE ROW LEVEL SECURITY;
 
-CREATE POLICY tenant_isolation ON knowledge_entries
+CREATE POLICY tenant_isolation ON watchlists
   USING       (tenant_id = current_setting('app.tenant_id', true)::uuid)
   WITH CHECK  (tenant_id = current_setting('app.tenant_id', true)::uuid);
 ```
 
-`current_setting('app.tenant_id', true)` の第二引数（missing_ok）により、セッション変数未設定時は例外ではなく NULL → 空集合（フェイルセーフ）になる。
+`current_setting('app.tenant_id', true)` の第二引数（missing_ok）で、未設定時は例外でなく NULL → 空集合（フェイルセーフ）。`tenant_settings` / `watchlist_items` も同パターン。
 
-`categories` / `validation_rules` / `field_definitions` / `destinations` / `inquiries` / `unclassified_queue` / `tenant_public_keys` も同じパターン。
-
-`tenants` 自体は **自分の所属テナントのみ閲覧可能**：
+**`sources`** は混在（グローバル + テナント）。可視性と書込を別ポリシーに分け、**テナントは `tenant_id IS NULL`（グローバル公開ソース）を書けない**ようにする:
 
 ```sql
-CREATE POLICY tenant_self_visible ON tenants
-  USING (id = current_setting('app.tenant_id', true)::uuid);
+-- 可視性: グローバル（tenant_id IS NULL）+ 自テナント
+CREATE POLICY sources_select ON sources FOR SELECT
+  USING (tenant_id IS NULL OR tenant_id = current_setting('app.tenant_id', true)::uuid);
+
+-- 書込: 自テナントのプライベートソースのみ（NULL = グローバルは書込不可）
+CREATE POLICY sources_modify ON sources FOR ALL
+  USING      (tenant_id = current_setting('app.tenant_id', true)::uuid)
+  WITH CHECK (tenant_id IS NOT NULL
+              AND tenant_id = current_setting('app.tenant_id', true)::uuid);
 ```
 
-`user_tenants` は **自分の所属レコードのみ閲覧可能**。`user_id` はアプリが `sub` から解決した内部 `users.id` を別セッション変数に流す：
+グローバルソースの作成・編集はマイグレーション / 収集パイプライン（`portfolio_owner`）に限定する。`WITH CHECK` に `tenant_id IS NOT NULL` を明示しないと、テナント admin が `tenant_id = NULL` で INSERT してグローバル公開ソースを生成でき、**全テナントの収集対象に任意 URL を注入**できる（SSRF・文書経由インジェクションの起点。[04_security_multitenant.md](04_security_multitenant.md) の「収集の信頼境界」）。
+
+**グローバル共有テーブル**（`terms` / `term_aliases` / `detections` / `summaries`）は全認証ユーザーが読む共有データで、テナント列を持たない。RLS は有効化しない（テナント scope が無いため）。書込は限定する: 新規 term 作成・出現由来は収集パイプライン（`portfolio_owner`）、F9 辞書管理・検知レビューは admin 操作（`portfolio_app`。ただし **RLS はグローバルを scope できない**ので、アプリ層の **admin 認可ガード + 監査ログ**で保護する）。`summaries` は worker（system key）生成で app は読み取りのみ。GRANT の詳細は [04_security_multitenant.md](04_security_multitenant.md)。
+
+`tenants` / `user_tenants` の自己可視ポリシー、`SET LOCAL app.user_id` の発行、`portfolio_owner`（スキーマ所有・マイグレーション）/ `portfolio_app`（アプリ接続・`NOBYPASSRLS`）の 2 ロール分離は [04_security_multitenant.md](04_security_multitenant.md) を参照。
+
+---
+
+## インデックス
 
 ```sql
-CREATE POLICY membership_self_visible ON user_tenants
-  USING (user_id = current_setting('app.user_id', true)::uuid);
+CREATE INDEX ON sources (tenant_id, enabled);
+CREATE INDEX ON sources (last_status) WHERE last_status <> 'ok';   -- F8 ヘルス
+CREATE INDEX ON term_aliases (term_id);
+CREATE INDEX ON term_identities (term_id);
+CREATE INDEX ON detections (type, window_end DESC);
+CREATE INDEX ON detections (term_id, detected_at DESC);
+CREATE INDEX ON watchlist_items (tenant_id, term_id);
 ```
 
-アプリは Node のデータ層で、リクエスト単位トランザクションの先頭に `SET LOCAL app.user_id = ...` と `SET LOCAL app.tenant_id = ...` の 2 本を発行する。匿名ウィジェット経由のアクセス用には別変数 `app.widget_tenant_id` を使い、混線を避ける。
+全文（BM25）・ベクトル（kNN）検索は Elasticsearch、時系列集計は BigQuery が担当するため、Postgres は構造化メタへの btree インデックスのみ。
 
-スキーマ所有者と接続ロールを分離する（`portfolio_owner` = スキーマ所有・マイグレーション専用、`portfolio_app` = アプリ接続・`NOBYPASSRLS`）。owner はテーブル所有者として RLS をすり抜けうるため、全テーブルに `FORCE ROW LEVEL SECURITY` を設定して owner にも RLS を強制する。詳細は [04_security_multitenant.md](04_security_multitenant.md)。
+---
 
-## トリガー：`match_count` 更新
+## 同期と整合性
 
-`inquiries.status='created'` 確定時、対応する `knowledge_entries.match_count` を +1：
+3 層の二重〜三重書き込みになるため整合性方針を決める:
 
-```sql
-CREATE OR REPLACE FUNCTION increment_match_count()
-RETURNS TRIGGER AS $$
-BEGIN
-  IF NEW.status = 'created' AND NEW.matched_knowledge_id IS NOT NULL
-     AND (OLD.status IS NULL OR OLD.status != 'created') THEN
-    UPDATE knowledge_entries
-       SET match_count = match_count + 1
-     WHERE id = NEW.matched_knowledge_id;
-  END IF;
-  RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
+- 収集ワーカーは 1 文書につき **(a) ES へ `doc_id` で冪等 upsert、(b) BigQuery `occurrences` へ追記（`doc_id`+`term_slug` で重複排除）**。Postgres の `terms` / `term_aliases` は抽出時に参照（必要なら新規 term を upsert）。
+- metrics ワーカーは `term_identities` を巡回し、`term_metrics` へ `(metric_date, term_slug, source, metric)` で冪等 upsert（文書・ES は介在しない）。
+- `daily_term_stats` は BigQuery のスケジュールクエリで `occurrences` から定期再構築（結果整合）。
+- 失敗はリトライキューに積み、再インデックス / 再集計ジョブで突合・修復。
+- 検索・関連トピックは ES 主、時系列・検知は BigQuery 主、エンティティ編集は Postgres 主、と読み分ける。
 
-CREATE TRIGGER trg_increment_match_count
-AFTER INSERT OR UPDATE OF status ON inquiries
-FOR EACH ROW EXECUTE FUNCTION increment_match_count();
-```
+---
 
-更新後の `match_count` は ES ドキュメントへ同期する。
+## 将来追加（Phase 2 以降）
 
-## 既存Excelからの流用度
-
-| 既存シート | 移行先 | 流用度 |
+| 対象 | 用途 | Phase |
 |---|---|---|
-| `knowledge` | `knowledge_entries`（+ ES 検索ドキュメント） | 9割流用 + `example_queries` / `match_count` / `ticket_priority` / `auto_resolution` / `guidance_message` 列追加（embedding は ES 側） |
-| `field_types` | `field_definitions` | 9割流用 + `is_multi` 追加 |
-| `categories` | `categories` | 9割流用、配列化 |
-| `validations` | `validation_rules` | そのまま |
-| `settings` | アプリ設定（DBではなくENV） | 移行しない |
-
-データ移行スクリプトは Node 想定で AI に書かせる範囲（[09_task_split.md](09_task_split.md) 参照）。
-
-## マスタモデル変更時の対応
-
-ES ドキュメントの `embedding_model` フィールドで混在を許容：
-
-- 既存ドキュメントは古いモデルの embedding を保持
-- 新規・更新ドキュメントは新モデルで生成
-- バックグラウンドジョブで段階的に再計算
-- 検索時、現行モデルと一致しない embedding は **ES 側で `embedding_model` フィルタ** により除外し、BM25 のみで検索
-
-検索対象の出し分けは Postgres ではなく ES 側で行う。これでダウンタイムなしのモデル切替が可能。
-
-## 将来追加されるテーブル（Phase 2 以降）
-
-| テーブル | 用途 | Phase |
-|---|---|---|
-| `document_chunks` | PDF / Word 等の非構造文書 chunk-based RAG（chunk も ES インデックス前提） | Phase 2 |
-| `tenant_public_keys` | 埋め込みウィジェット用の公開APIキー（rate-limited） | MVP（[06_destinations.md](06_destinations.md) と並行設計） |
-
-`tenant_public_keys` は埋め込みウィジェット用：
-
-```sql
-CREATE TABLE tenant_public_keys (
-  id              uuid PRIMARY KEY DEFAULT gen_random_uuid(),
-  tenant_id       uuid NOT NULL REFERENCES tenants(id) ON DELETE CASCADE,
-  key_hash        text NOT NULL,   -- bcrypt 等のハッシュ
-  label           text,             -- "MyCompany Website" 等
-  rate_limit_rpm  int NOT NULL DEFAULT 30,
-  allowed_origins text[] NOT NULL DEFAULT '{}',
-  created_at      timestamptz NOT NULL DEFAULT now(),
-  last_used_at    timestamptz
-);
-```
+| `categories` / 創発クラスタ | 「次の MCP」ムーブメント検知（急上昇クラスタのまとめ） | fast-follow |
+| `alerts` / 配信設定 | F7 ダイジェスト・アラート（ウォッチリスト連動） | fast-follow |
+| プライベートソース文書の ES テナント分離 | テナント自社ブログ等の取込 | Phase 2 |
+| `tenant_public_keys` | 公開 API / 埋め込み用の rate-limited キー | Phase 2 |

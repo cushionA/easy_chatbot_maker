@@ -19,7 +19,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [csharp, python]
+        language: [python]   # csharp は .NET 廃止に伴い無効化（Sprint 2 で js-ts を追加）
     steps:
       - uses: actions/checkout@v6
       - uses: github/codeql-action/init@v4
