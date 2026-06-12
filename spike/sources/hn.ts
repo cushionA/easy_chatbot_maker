@@ -3,7 +3,7 @@
 // 完成コードは無い。シグネチャと手順コメントを埋めていく。
 
 const BASE = "https://hn.algolia.com/api/v1/search_by_date";
-const UA = "trendscope-spike (contact: REPLACE_ME)"; // ★自分の連絡先に書き換える
+const UA = "trendscope-spike (contact: tatuki.m1105@outlook.jp)"; // ★自分の連絡先に書き換える
 
 const DAYS = 30;
 const MIN_POINTS = 5; // 低ポイント story を足切りして 1 窓 1000 件以内に収めやすくする
