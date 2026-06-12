@@ -42,7 +42,7 @@ spike/dict/build-seed.ts を書いて。仕様:
 1. `spike/dict/terms.json` を作る。形式は `extract.ts` の `DictEntry`（`slug` / `display` / `aliases[]` / `ambiguous?`）。候補から **150〜300 語**選ぶ（一般語・サイト固有語は捨てる）
 2. 表記揺れを aliases に畳む（最低限: `k8s`→kubernetes, `js`→javascript, `ts`→typescript, `golang`→go, `postgres`→postgresql, `rails`→ruby-on-rails 等。HN 側で出る英語表記も意識）
 3. `spike/dict/excluded.json`（一般語: app, data, web, server, code, ai ← ai は判断が分かれる。迷ったら入れて findings にメモ）
-4. `spike/dict/ambiguous.json`（`{ "go": ["golang","goroutine","module","gopher"], "rust": ["cargo","crate","rustc","memory"], "swift": ["ios","xcode","apple"] , ...}` 形式の共起ホワイトリスト）
+4. `spike/dict/ambiguous.json`（`{ "go": ["golang","goroutine","module","gopher"], "rust": ["cargo","crate","rustc","memory"], "swift": ["ios","xcode","apple"] , ...}` 形式の共起ホワイトリスト）。terms.json で `ambiguous: true` を付けた slug ごとに必ずここにも共起語を書く（フラグだけだとタイトル層で一切ヒットしなくなり、リストだけだと参照されない — ペアで保守）
 
 **完了確認**
 - [ ] terms.json 150 語以上、aliases に揺れ吸収が 20 組以上
@@ -76,6 +76,7 @@ design/05 の抽出 2 層（(a) タグ→直接 / (b) タイトル→辞書マ�
 
 **詰まったら**
 - 部分一致誤爆（`java` が `javascript` に当たる）→ 単語境界の区切り文字クラスを見直す。先に長い alias からマッチして除去する手もある
+- 正規表現が落ちる / 当たらない → alias 内の特殊文字（`+` や `.`）はエスケープしてから埋め込む（c++ / node.js / .net が定番の罠）
 
 ---
 

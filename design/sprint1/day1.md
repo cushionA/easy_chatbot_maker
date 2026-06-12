@@ -12,8 +12,8 @@
 Node22 + tsx の最小環境で「TS ファイルを直接実行できる」状態を確かめる。リハビリ枠。
 
 **前提確認**
-- [ ] `node --version` が v22.x
-- [ ] `spike/package.json` と骨格ファイル（`types.ts` / `sources/hn.ts` / `extract.ts` / `aggregate.ts` / `detect.ts` / `findings.md`）がある
+- [x] `node --version` が v22.x
+- [x] `spike/package.json` と骨格ファイル（`types.ts` / `sources/hn.ts` / `extract.ts` / `aggregate.ts` / `detect.ts` / `findings.md`）がある
 
 **手順**
 1. `cd spike && npm install`（tsx が入る）
@@ -21,8 +21,8 @@ Node22 + tsx の最小環境で「TS ファイルを直接実行できる」状�
 3. `sources/hn.ts` の `UA` 定数の `REPLACE_ME` を自分の連絡先（メール or GitHub URL）に書き換える
 
 **完了確認**
-- [ ] `npx tsx -e ...` が `ok v22.x` を出す
-- [ ] UA に連絡先が入った（礼儀正しいクローラの第一歩。design/06 の作法）
+- [x] `npx tsx -e ...` が `ok v22.x` を出す
+- [x] UA に連絡先が入った（礼儀正しいクローラの第一歩。design/06 の作法）
 
 **詰まったら**
 - `tsx: command not found` → `npx tsx` で叩く（PATH の問題）
@@ -46,7 +46,7 @@ Node22 + tsx の最小環境で「TS ファイルを直接実行できる」状�
 1. `fetchWindow()` を実装（骨格のコメント通り。URLSearchParams / fetch / `data.hits`）
 2. まず**1 回だけ**叩いて `hits.length` と先頭の `title` / `created_at_i` を print（形を見る）
 3. `main()` の窓スライドループを実装（cursor = バッチ最小 `created_at_i`、300ms sleep、JSONL 追記）
-4. `npm run hn` で 30 日分を取得
+4. `npm run hn` で 30 日分を取得（`spike/` ディレクトリで実行）
 
 **完了確認**
 - [ ] `out/hn-raw.jsonl` ができ、数千件オーダー（points>=5 の 30 日なら ~5,000〜9,000 件）
@@ -56,6 +56,7 @@ Node22 + tsx の最小環境で「TS ファイルを直接実行できる」状�
 **詰まったら**
 - hits が毎回同じ → cursor の更新忘れ（バッチ最小 `created_at_i` を次の `<` に入れる）
 - 0 件で即終了 → `numericFilters` のカンマ区切り・比較演算子を確認（[14 §1](../14_data_sources.md) の実例 URL と見比べる）
+- フィルタが正しいのに 0 件 → 単位を疑う。`created_at_i` は Unix **秒**、`Date.now()` はミリ秒（1000 で割ってから窓を組む）
 - 出力が巨大 → JSONL は 1 行 1 hit の `JSON.stringify`。pretty print しない
 
 ---
@@ -74,6 +75,7 @@ JP 側の源泉。タグ付き・人気度付きの記事 30 日分を raw JSONL
 spike/sources/qiita.ts を書いて。仕様:
 - design/14_data_sources.md §3 が正。GET https://qiita.com/api/v2/items?per_page=100&page=N
 - ヘッダ: Authorization: Bearer ${process.env.QIITA_TOKEN}（未設定なら付けない）、連絡先入り User-Agent
+- 冒頭で process.loadEnvFile("./.env") を try/catch で呼ぶ（Node 22 標準。.env が無ければ無認証のまま続行）
 - 各レスポンスの Rate-Remaining ヘッダを console に出し、10 を切ったら Rate-Reset まで待つ
 - 各記事の created_at（+09:00）が 30 日前より古くなったら停止
 - 1 行 1 記事の JSONL で spike/out/qiita-raw.jsonl に追記。リクエスト間 500ms sleep
@@ -114,6 +116,7 @@ design/06 の `CollectedItem` を**実データに当てて**過不足を見つ�
 
 **詰まったら**
 - Qiita の日付がズレる → `new Date("...+09:00").toISOString()` で UTC 化してから `slice(0, 10)`（先に slice すると JST 日付になる）
+- JSONL の読み方 → `readFileSync` で全読み → `split("\n")` → `filter(Boolean)` → 1 行ずつ `JSON.parse`（このサイズなら全読みで足りる）
 
 ---
 
