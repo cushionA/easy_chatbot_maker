@@ -1,8 +1,5 @@
 {
   "recommendations": [
-    "ms-dotnettools.csdevkit",
-    "ms-dotnettools.csharp",
-    "ms-dotnettools.vscode-dotnet-runtime",
     "ms-python.python",
     "ms-python.vscode-pylance",
     "charliermarsh.ruff",

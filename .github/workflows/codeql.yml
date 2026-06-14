@@ -19,17 +19,11 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        language: [python]   # csharp は .NET 廃止に伴い無効化（Sprint 2 で js-ts を追加）
+        language: [python]   # Sprint 2 で js-ts を追加
     steps:
       - uses: actions/checkout@v6
       - uses: github/codeql-action/init@v4
         with:
           languages: ${{ matrix.language }}
           queries: security-extended
-      - if: matrix.language == 'csharp'
-        uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: '8.0.x'
-      - if: matrix.language == 'csharp'
-        run: dotnet build backend/Portfolio.sln --configuration Release
       - uses: github/codeql-action/analyze@v4

@@ -13,33 +13,6 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  backend:
-    name: backend (.NET 8)
-    if: false  # 旧 .NET。実コードが Node へ移るまで無効化（Sprint 2 で Node ジョブへ置換、削除はしない）
-    runs-on: ubuntu-latest
-    defaults:
-      run:
-        working-directory: backend
-    steps:
-      - uses: actions/checkout@v6
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: '8.0.x'
-      - name: Cache NuGet
-        uses: actions/cache@v5
-        with:
-          path: ~/.nuget/packages
-          key: nuget-${{ runner.os }}-${{ hashFiles('**/*.csproj') }}
-          restore-keys: nuget-${{ runner.os }}-
-      - run: dotnet restore Portfolio.sln
-      - run: dotnet build Portfolio.sln --configuration Release --no-restore
-      - run: dotnet test Portfolio.sln --configuration Release --no-build --logger "trx;LogFileName=test-results.trx"
-      - uses: actions/upload-artifact@v7
-        if: always()
-        with:
-          name: dotnet-test-results
-          path: backend/**/TestResults/*.trx
-
   embedding:
     name: embedding (Python 3.11)
     runs-on: ubuntu-latest
@@ -97,18 +70,10 @@ jobs:
     name: docker images build
     if: false  # 旧イメージ（backend .NET 等）。Sprint 2 で apps/api・apps/web の新イメージビルドへ置換
     runs-on: ubuntu-latest
-    needs: [backend, embedding]
+    needs: [embedding]
     steps:
       - uses: actions/checkout@v6
       - uses: docker/setup-buildx-action@v4
-      - name: Build backend image
-        uses: docker/build-push-action@v7
-        with:
-          context: ./backend
-          push: false
-          tags: portfolio-backend:ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
       - name: Build embedding image
         uses: docker/build-push-action@v7
         with:

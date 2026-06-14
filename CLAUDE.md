@@ -6,7 +6,6 @@
 
 | パス | 役割 | 規約 |
 |---|---|---|
-| `backend/` | Blazor Server + ASP.NET Core 8 + EF Core | [`backend/CLAUDE.md`](backend/CLAUDE.md) |
 | `embedding/` | FastAPI + sentence-transformers (multilingual-e5-base) | [`embedding/CLAUDE.md`](embedding/CLAUDE.md) |
 | `infra/db/` | Postgres init + 0001_schema.sql（pgvector / pg_trgm / GIN / HNSW） | — |
 | `infra/caddy/` | 本番リバースプロキシ（profiles=prod） | — |
@@ -43,9 +42,9 @@ make secrets       # gitleaks
 
 ## CI / pre-commit
 
-- `.github/workflows/ci.yml`: backend (dotnet) / embedding (ruff + mypy + pytest) / docker-build / pr-security の 4 ジョブ。
-- `.github/workflows/codeql.yml`: C#/Python マトリクス、weekly schedule、`security-extended` クエリ。
-- `.pre-commit-config.yaml`: trailing-whitespace / detect-private-key / gitleaks / dotnet-format / ruff / pr-validate（`.claude/scripts/pr-validate.py` を vendored）。
+- `.github/workflows/ci.yml`: embedding (ruff + mypy + pytest) / docker-build / pr-security の 4 ジョブ。
+- `.github/workflows/codeql.yml`: Python マトリクス、weekly schedule、`security-extended` クエリ。
+- `.pre-commit-config.yaml`: trailing-whitespace / detect-private-key / gitleaks / ruff / pr-validate（`.claude/scripts/pr-validate.py` を vendored）。
 - `pre-commit install` を実行してから作業を開始する。
 
 ## Forbidden / 全体方針

@@ -34,13 +34,13 @@ PR は 1 つの目的に絞る（Kitchen Sink PR 禁止）。
 例:
 ```
 feat(embedding): add /embed/batch endpoint with input validation
-fix(backend): handle null tenant_id from JWT claim
-chore(deps): bump Microsoft.EntityFrameworkCore 8.0.10 → 8.0.11
+fix(api): handle null tenant_id from JWT claim
+chore(deps): bump fastapi 0.115.0 → 0.115.2
 ```
 
 ## 開発フロー
 
-1. `make install-tooling` で pre-commit と dotnet tools をセットアップ
+1. `make install-tooling` で pre-commit と npm 依存をセットアップ
 2. ブランチ作成 → 実装 → `make lint test`
 3. `make scan` でプロンプトインジェクション検査（任意）
 4. push → PR
@@ -50,9 +50,6 @@ chore(deps): bump Microsoft.EntityFrameworkCore 8.0.10 → 8.0.11
 
 | 層 | チェック | コマンド |
 |---|---|---|
-| backend | dotnet build (warnings as errors) | `make build.backend` |
-| backend | dotnet format verify | `make lint.backend` |
-| backend | xUnit | `make test.backend` |
 | embedding | ruff check + format | `make lint.embedding` |
 | embedding | mypy --strict | `make lint.embedding` |
 | embedding | pytest | `make test.embedding` |
@@ -62,7 +59,7 @@ chore(deps): bump Microsoft.EntityFrameworkCore 8.0.10 → 8.0.11
 | 全体 | commitlint (Conventional Commits) | commit-msg フック |
 | 全体 | docker build | `make up` |
 | 全体 | gitleaks | `make secrets` |
-| 全体 | CodeQL (csharp+python) | CI |
+| 全体 | CodeQL (python) | CI |
 
 すべて pre-commit + GitHub Actions で自動実行される。
 

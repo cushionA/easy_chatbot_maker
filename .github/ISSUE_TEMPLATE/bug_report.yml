@@ -37,7 +37,6 @@ body:
       label: 影響範囲
       multiple: true
       options:
-        - backend (Blazor / ASP.NET Core)
         - embedding (FastAPI)
         - infra / docker-compose
         - CI / GitHub Actions
@@ -51,7 +50,6 @@ body:
       label: 環境
       placeholder: |
         OS:
-        .NET SDK:
         Python:
         Docker:
   - type: textarea
