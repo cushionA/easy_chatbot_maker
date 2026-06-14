@@ -67,9 +67,9 @@ def load_exclusions():
 def scan(text: str, source: str, exclusions: list, added_only: bool = False) -> list[dict]:
     findings = []
     # In a unified diff only newly-added lines can introduce content; removed (`-`) and
-    # context lines cannot, so scanning them yields false positives (e.g. deleting a config
-    # line that held `password: ${VAR}`). In diff mode, scan only `+` lines (not the `+++`
-    # file header).
+    # context lines cannot, so scanning them produces false positives when a deleted line
+    # merely referenced an interpolated env value. In diff mode, scan only `+` lines (not
+    # the `+++` file header).
     if added_only:
         for idx, raw in enumerate(text.split("\n")):
             if not raw.startswith("+") or raw.startswith("+++"):
