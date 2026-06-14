@@ -6,7 +6,6 @@ build/
 coverage/
 .next/
 spike/
-backend/
 embedding/
 design/
 **/*.min.*

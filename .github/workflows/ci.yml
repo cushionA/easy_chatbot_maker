@@ -68,7 +68,7 @@ jobs:
 
   docker-build:
     name: docker images build
-    if: false  # 旧イメージ（backend .NET 等）。Sprint 2 で apps/api・apps/web の新イメージビルドへ置換
+    if: false  # Sprint 2 で apps/api・apps/web の新イメージビルドへ置換
     runs-on: ubuntu-latest
     needs: [embedding]
     steps:

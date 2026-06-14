@@ -11,7 +11,7 @@
 | SQL | sqlfluff fix | sqlfluff lint | Vitest + Testcontainers | [`.sqlfluff`](../../.sqlfluff) |
 | 全ファイル | EditorConfig | pre-commit（whitespace / secrets / 大ファイル） | — | [`.editorconfig`](../../.editorconfig) / [`.pre-commit-config.yaml`](../../.pre-commit-config.yaml) |
 
-横断: **gitleaks**（秘密混入）/ **CodeQL**（C#/Python の SAST、CI）/ **プロンプトインジェクション検査**（`make scan`）/ **commitlint**（Conventional Commits、commit-msg フック）。
+横断: **gitleaks**（秘密混入）/ **CodeQL**（Python の SAST、CI）/ **プロンプトインジェクション検査**（`make scan`）/ **commitlint**（Conventional Commits、commit-msg フック）。
 
 ## TypeScript ツール（今回追加）
 
@@ -56,7 +56,7 @@ make lint.ts format.ts typecheck.ts
 
 ## EditorConfig
 
-[`.editorconfig`](../../.editorconfig) が全エディタ共通の最低限（文字コード・改行 LF・末尾空白・インデント幅）を強制。TS/JS/CSS は 2スペース、Python/C# 等の既定は 4スペース、YAML/JSON は 2スペース。Prettier・ruff はこれと矛盾しない（Prettier は `tabWidth: 2` を明示して TS を 2スペースに固定）。
+[`.editorconfig`](../../.editorconfig) が全エディタ共通の最低限（文字コード・改行 LF・末尾空白・インデント幅）を強制。TS/JS/CSS は 2スペース、Python 等の既定は 4スペース、YAML/JSON は 2スペース。Prettier・ruff はこれと矛盾しない（Prettier は `tabWidth: 2` を明示して TS を 2スペースに固定）。
 
 ## pre-commit
 
@@ -67,7 +67,7 @@ pre-commit install -t pre-commit -t commit-msg   # make install-tooling に含�
 pre-commit run -a    # 全ファイルに手動実行（commit-msg フックは対象外）
 ```
 
-フック: 汎用（trailing-whitespace / end-of-file / check-yaml/json/toml / merge-conflict / 大ファイル / private-key / mixed-line-ending）+ **ruff**（embedding）+ **gitleaks** + **sqlfluff**（`infra/db` の SQL）+ **dotnet format**（backend、無効化中だが残置）+ **prompt-injection-scan** + **prettier / eslint**（TS、`apps`/`workers`/`packages` 配下を対象）+ **commitlint**（commit-msg ステージ）。
+フック: 汎用（trailing-whitespace / end-of-file / check-yaml/json/toml / merge-conflict / 大ファイル / private-key / mixed-line-ending）+ **ruff**（embedding）+ **gitleaks** + **sqlfluff**（`infra/db` の SQL）+ **prompt-injection-scan** + **prettier / eslint**（TS、`apps`/`workers`/`packages` 配下を対象）+ **commitlint**（commit-msg ステージ）。
 
 ## VS Code
 
@@ -84,7 +84,7 @@ cp .vscode/settings.json.example .vscode/settings.json
 - **node (TS)**: `npm ci` → `format:check` → `lint` → `typecheck`（app が無い間も緑。コードが入ると自動でゲート化）。
 - **embedding (Python)**: ruff check / ruff format --check / mypy / pytest。
 - **pr-security**: プロンプトインジェクション検査（PR 時）。
-- backend(.NET) / docker-build は `if: false` で無効化（Sprint 2 で `apps/api`・`apps/web` の Node ジョブ・イメージへ置換予定）。
+- docker-build は `if: false` で無効化（Sprint 2 で `apps/api`・`apps/web` の新イメージビルドへ置換予定）。
 
 CodeQL は [`.github/workflows/codeql.yml`](../../.github/workflows/codeql.yml)（weekly + push/PR）。
 
