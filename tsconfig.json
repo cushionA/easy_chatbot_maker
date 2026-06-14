@@ -1,0 +1,5 @@
+{
+  "//": "Solution-style root config. Holds no sources itself (files: []). Each TS package adds a { \"path\": ... } entry below so `tsc -b` / `npm run typecheck` checks the whole graph. See docs/conventions/typescript.md.",
+  "files": [],
+  "references": []
+}

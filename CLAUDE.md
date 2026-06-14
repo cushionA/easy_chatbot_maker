@@ -19,6 +19,7 @@
 - **Embedding 規約**: `multilingual-e5-base` は query には `query:`、文書には `passage:` プレフィクスを付ける。`/embed` の `mode` パラメータで切り替える。
 - **正の情報源**: コードと `design/` が食い違ったら `design/` を確認し、必要なら設計を更新してからコードを直す。
 - **言語**: コミュニケーション・コミットメッセージは日本語で良いが、コードコメント・識別子・PR タイトルは英語。
+- **コーディング規約**: スタック別の書き方・定義順・コメント・レビュー基準は [`docs/conventions/`](docs/conventions/README.md)、品質ツールの使い方は [`docs/conventions/TOOLING.md`](docs/conventions/TOOLING.md)。
 
 ## 主要コマンド
 

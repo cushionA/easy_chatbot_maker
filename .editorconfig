@@ -18,5 +18,5 @@ trim_trailing_whitespace = false
 csharp_new_line_before_open_brace = all
 dotnet_diagnostic.CS1591.severity = none
 
-[*.{ts,tsx,js,jsx,css,html}]
+[*.{ts,tsx,mts,cts,js,jsx,mjs,cjs,css,scss,html}]
 indent_size = 2

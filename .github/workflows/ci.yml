@@ -65,6 +65,34 @@ jobs:
       - name: Test (pytest)
         run: pytest
 
+  node:
+    name: node (TS lint + typecheck)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Format check (prettier)
+        run: npm run format:check
+      - name: Lint (eslint)
+        run: npm run lint
+      - name: Type check (tsc)
+        run: npm run typecheck
+
+  sql:
+    name: sql (sqlfluff)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.11'
+      - run: pip install sqlfluff==4.2.2
+      - run: sqlfluff lint infra/db
+
   docker-build:
     name: docker images build
     if: false  # 旧イメージ（backend .NET 等）。Sprint 2 で apps/api・apps/web の新イメージビルドへ置換

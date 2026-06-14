@@ -1,0 +1,30 @@
+// Project-recommended editor settings. `.vscode/settings.json` is gitignored (personal),
+// so copy this file there to opt in:  cp .vscode/settings.json.example .vscode/settings.json
+// Requires the extensions in .vscode/extensions.json.
+{
+  "editor.formatOnSave": true,
+  "editor.codeActionsOnSave": {
+    "source.fixAll.eslint": "explicit"
+  },
+  "eslint.useFlatConfig": true,
+
+  // TypeScript / React / web assets → Prettier
+  "[typescript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[typescriptreact]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[javascript]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[json]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[jsonc]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+  "[css]": { "editor.defaultFormatter": "esbenp.prettier-vscode" },
+
+  // Python → ruff (format + import sort), mypy via the type-checker extension
+  "[python]": {
+    "editor.defaultFormatter": "charliermarsh.ruff",
+    "editor.codeActionsOnSave": { "source.organizeImports": "explicit" }
+  },
+  "ruff.importStrategy": "fromEnvironment",
+
+  // Match .editorconfig: trim whitespace except Markdown (trailing spaces are line breaks)
+  "files.insertFinalNewline": true,
+  "files.trimTrailingWhitespace": true,
+  "[markdown]": { "files.trimTrailingWhitespace": false }
+}

@@ -56,6 +56,10 @@ chore(deps): bump Microsoft.EntityFrameworkCore 8.0.10 → 8.0.11
 | embedding | ruff check + format | `make lint.embedding` |
 | embedding | mypy --strict | `make lint.embedding` |
 | embedding | pytest | `make test.embedding` |
+| ts | eslint (type-aware) + prettier check | `make lint.ts` |
+| ts | tsc 型チェック | `make typecheck.ts` |
+| sql | sqlfluff lint | `make lint.sql` |
+| 全体 | commitlint (Conventional Commits) | commit-msg フック |
 | 全体 | docker build | `make up` |
 | 全体 | gitleaks | `make secrets` |
 | 全体 | CodeQL (csharp+python) | CI |
@@ -63,6 +67,7 @@ chore(deps): bump Microsoft.EntityFrameworkCore 8.0.10 → 8.0.11
 すべて pre-commit + GitHub Actions で自動実行される。
 
 ## レビュー基準
+- スタック別の書き方・定義順・コメント方針は [`docs/conventions/`](docs/conventions/README.md) を基準にする（各章末のチェックリストをレビュー観点に使う）
 - 設計意図がコミットメッセージ or PR 本文から読み取れること
 - マルチテナント境界（`tenant_id` / RLS）を越える変更がある場合は本文に明記
 - 公開 API の入出力スキーマ変更は PR タイトルに `BREAKING:` を付ける

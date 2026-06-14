@@ -40,9 +40,14 @@ htmlcov/
 # ===== Docker =====
 docker-compose.override.yml
 
-# ===== Node (もし使う場合) =====
+# ===== Node / TypeScript =====
 node_modules/
 .next/
+.eslintcache
+*.tsbuildinfo
+playwright-report/
+playwright/.cache/
+test-results/
 
 # ===== OS =====
 .DS_Store

@@ -1,0 +1,16 @@
+# Enforce LF line endings repo-wide. The repo mandates LF (.editorconfig end_of_line=lf,
+# Prettier endOfLine=lf, pre-commit mixed-line-ending --fix=lf); without this, Windows
+# checkouts get CRLF and `prettier --check` / `make` break. Binaries are marked so Git
+# leaves them untouched.
+* text=auto eol=lf
+
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.pdf   binary
+*.pfx   binary
+*.p12   binary
+*.woff  binary
+*.woff2 binary

@@ -1,0 +1,14 @@
+# Prettier owns the TS stack only. Markdown/YAML keep their own conventions
+# (.editorconfig + pre-commit hooks), and these trees are managed elsewhere.
+node_modules/
+dist/
+build/
+coverage/
+.next/
+spike/
+backend/
+embedding/
+design/
+**/*.min.*
+package-lock.json
+pnpm-lock.yaml

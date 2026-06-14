@@ -12,18 +12,19 @@ help: ## List available targets
 	@awk 'BEGIN{FS=":.*##"; printf "Targets:\n"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 .PHONY: install-tooling
-install-tooling: ## Install pre-commit + dotnet local tools
-	pre-commit install
+install-tooling: ## Install pre-commit (+commit-msg) + npm deps + dotnet local tools
+	pre-commit install -t pre-commit -t commit-msg
+	npm install
 	cd backend && dotnet tool restore
 
 .PHONY: lint
-lint: lint.backend lint.embedding ## Lint everything
+lint: lint.backend lint.embedding lint.ts ## Lint everything
 
 .PHONY: test
 test: test.backend test.embedding ## Test everything
 
 .PHONY: format
-format: format.backend format.embedding ## Auto-format everything
+format: format.backend format.embedding format.ts ## Auto-format everything
 
 # ---- backend ----------------------------------------------------------------
 
@@ -68,6 +69,36 @@ test.embedding: ## pytest (fake embedder)
 .PHONY: run.embedding
 run.embedding: ## Run uvicorn with reload
 	cd embedding && FAKE_EMBEDDER=1 uvicorn app.main:app --reload --port 9000
+
+# ---- typescript -------------------------------------------------------------
+
+.PHONY: install.ts
+install.ts: ## npm install (root TS tooling)
+	npm install
+
+.PHONY: lint.ts
+lint.ts: ## eslint + prettier check (TS / React)
+	npm run lint
+	npm run format:check
+
+.PHONY: format.ts
+format.ts: ## prettier write + eslint --fix
+	npm run format
+	npm run lint:fix
+
+.PHONY: typecheck.ts
+typecheck.ts: ## tsc -b (no-op until apps registered in tsconfig references)
+	npm run typecheck
+
+# ---- sql --------------------------------------------------------------------
+
+.PHONY: lint.sql
+lint.sql: ## sqlfluff lint migrations (needs: pip install sqlfluff)
+	sqlfluff lint infra/db
+
+.PHONY: format.sql
+format.sql: ## sqlfluff fix migrations (review the diff; respects .sqlfluff)
+	sqlfluff fix infra/db
 
 # ---- compose ----------------------------------------------------------------
 

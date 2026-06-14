@@ -28,6 +28,12 @@ repos:
     hooks:
       - id: gitleaks
 
+  - repo: https://github.com/sqlfluff/sqlfluff
+    rev: 4.2.2
+    hooks:
+      - id: sqlfluff-lint
+        files: ^infra/db/.*\.sql$
+
   - repo: local
     hooks:
       - id: dotnet-format
@@ -42,3 +48,21 @@ repos:
         language: system
         pass_filenames: false
         stages: [pre-commit]
+      # TS stack: prettier/eslint via the root tooling (run `make install-tooling` first).
+      # Scoped to the new code dirs, so these no-op until apps/workers/packages exist.
+      - id: prettier
+        name: prettier (TS/JS/CSS format check)
+        entry: npx --no-install prettier --check
+        language: system
+        files: ^(apps|workers|packages)/.*\.(ts|tsx|js|jsx|mjs|cjs|css)$
+      - id: eslint
+        name: eslint (TS)
+        entry: npx --no-install eslint --max-warnings=0
+        language: system
+        files: ^(apps|workers|packages)/.*\.(ts|tsx)$
+      - id: commitlint
+        name: commitlint (conventional commits)
+        entry: npx --no-install commitlint --edit
+        language: system
+        stages: [commit-msg]
+        pass_filenames: false
