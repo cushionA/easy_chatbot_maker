@@ -42,7 +42,7 @@ make secrets       # gitleaks
 
 ## CI / pre-commit
 
-- `.github/workflows/ci.yml`: embedding (ruff + mypy + pytest) / docker-build / pr-security の 4 ジョブ。
+- `.github/workflows/ci.yml`: embedding (ruff + mypy + pytest) / node (eslint + tsc) / sql (sqlfluff) / docker-build / pr-security の 5 ジョブ。
 - `.github/workflows/codeql.yml`: Python マトリクス、weekly schedule、`security-extended` クエリ。
 - `.pre-commit-config.yaml`: trailing-whitespace / detect-private-key / gitleaks / ruff / pr-validate（`.claude/scripts/pr-validate.py` を vendored）。
 - `pre-commit install` を実行してから作業を開始する。
