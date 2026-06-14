@@ -12,41 +12,18 @@ help: ## List available targets
 	@awk 'BEGIN{FS=":.*##"; printf "Targets:\n"} /^[a-zA-Z0-9_.-]+:.*##/ {printf "  %-22s %s\n", $$1, $$2}' $(MAKEFILE_LIST)
 
 .PHONY: install-tooling
-install-tooling: ## Install pre-commit (+commit-msg) + npm deps + dotnet local tools
+install-tooling: ## Install pre-commit (+commit-msg) + npm deps
 	pre-commit install -t pre-commit -t commit-msg
 	npm install
-	cd backend && dotnet tool restore
 
 .PHONY: lint
-lint: lint.backend lint.embedding lint.ts ## Lint everything
+lint: lint.embedding lint.ts ## Lint everything
 
 .PHONY: test
-test: test.backend test.embedding ## Test everything
+test: test.embedding ## Test everything
 
 .PHONY: format
-format: format.backend format.embedding format.ts ## Auto-format everything
-
-# ---- backend ----------------------------------------------------------------
-
-.PHONY: build.backend
-build.backend: ## Build the .NET solution
-	cd backend && dotnet build Portfolio.sln -c Release
-
-.PHONY: test.backend
-test.backend: ## Run xUnit tests
-	cd backend && dotnet test Portfolio.sln -c Release --nologo
-
-.PHONY: lint.backend
-lint.backend: ## dotnet format verify
-	cd backend && dotnet format Portfolio.sln --verify-no-changes
-
-.PHONY: format.backend
-format.backend: ## dotnet format apply
-	cd backend && dotnet format Portfolio.sln
-
-.PHONY: run.backend
-run.backend: ## Run Blazor server locally
-	cd backend && dotnet run --project Portfolio.Web
+format: format.embedding format.ts ## Auto-format everything
 
 # ---- embedding --------------------------------------------------------------
 

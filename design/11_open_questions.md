@@ -170,6 +170,18 @@
 
 ---
 
+## 移行・片付けの残タスク（C# 撤去後）
+
+旧 .NET スタック撤去（[PR #41](https://github.com/cushionA/easy_chatbot_maker/pull/41)）で顕在化した、別 PR で片付ける項目。C# 本体・設定参照は撤去済みで、以下は「C# 資産ではないが旧スタック前提で残った」もの。
+
+| # | 残タスク | 現状 / 理由 | 対応時期 |
+|---|---|---|---|
+| M1 | `infra/caddy/Caddyfile` の backend upstream を撤去 / 差替 | 削除済み backend へ `reverse_proxy` する記述が残存（prod プロファイル限定のため dev では実害なし） | `apps/api`・`apps/web` 着手時の infra 再構成 |
+| M2 | README / CLAUDE.md の旧スタック前提を一掃 | Supabase / Plan B / RAG チャットボットの前提が残存（C# でないため C# 撤去 PR のスコープ外。design はピボット済み） | doc 整合パス |
+| M3 | Supabase の GitHub 連携を解除 | PR に "Supabase Preview" チェックが出る（連携が生存）。設計から Supabase は撤去済み | 任意（GitHub / Supabase 管理画面で手動） |
+
+---
+
 ## ロードマップ・優先順位
 
 実装着手の順序はまだ確定していない。候補:

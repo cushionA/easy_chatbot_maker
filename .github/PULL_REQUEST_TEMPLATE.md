@@ -17,7 +17,6 @@
 -
 
 ## Test plan
-- [ ] `make test.backend` 通過
 - [ ] `make test.embedding` 通過
 - [ ] `make lint` 通過
 - [ ] ローカルで動作確認

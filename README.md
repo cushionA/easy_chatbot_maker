@@ -11,8 +11,7 @@ Web エンジニア転職用のポートフォリオ。**ナレッジ起票補�
 **Sprint 0（開発基盤）完了** — 2026-05-15 時点。動くのは以下まで:
 
 - Embedding サービス（`FastAPI` + `intfloat/multilingual-e5-base`、query/passage 切替対応）
-- Postgres スキーマ（全 10 テーブル / pgvector / トリガ）と EF Core エンティティ
-- Blazor の `Home.razor`（Embedding を 1 回叩いて次元数を表示するだけのデモ）
+- Postgres スキーマ（全 10 テーブル / pgvector / トリガ）
 - CI / CodeQL / Dependabot / pre-commit / Docker Compose / Caddy 雛形
 
 **未実装（Sprint 1 以降）**: 認証 (Supabase JWT)、RLS、ナレッジ CRUD 画面、未分類キュー、ハイブリッド検索、Redmine/GitHub Adapter、Gemini BYOK、Vault 連携。詳細ロードマップは [`design/09_task_split.md`](design/09_task_split.md)。
@@ -23,7 +22,6 @@ Web エンジニア転職用のポートフォリオ。**ナレッジ起票補�
 
 | レイヤー | 採用技術 |
 |---|---|
-| フロント / バックエンド | Blazor Server + ASP.NET Core 8 (C#) |
 | Embedding 推論 | FastAPI + sentence-transformers (`intfloat/multilingual-e5-base`) |
 | DB | Postgres 16 + pgvector + pg_trgm |
 | 認証 | Supabase Auth（Plan B 構成時） |
@@ -39,9 +37,6 @@ Web エンジニア転職用のポートフォリオ。**ナレッジ起票補�
 
 ```
 .
-├─ backend/                ASP.NET Core 8 + Blazor Server
-│  ├─ Portfolio.Web/       本体
-│  └─ Portfolio.Web.Tests/ 統合テスト (xUnit)
 ├─ embedding/              FastAPI 推論サービス
 │  ├─ app/
 │  └─ tests/               pytest（FAKE_EMBEDDER でモデルロード回避）
@@ -60,7 +55,6 @@ Web エンジニア転職用のポートフォリオ。**ナレッジ起票補�
 
 ### 前提
 - Docker Desktop / Docker Engine
-- .NET SDK 8.0
 - Python 3.11+
 - pre-commit (`pip install pre-commit && pre-commit install`)
 
@@ -73,7 +67,6 @@ docker compose up --build
 
 | サービス | URL |
 |---|---|
-| Blazor (Web) | http://localhost:8080 |
 | FastAPI (Embedding) | http://localhost:9000/healthz |
 | Postgres | localhost:5432 |
 | Swagger UI | http://localhost:9000/docs |
@@ -85,10 +78,6 @@ docker compose up --build
 cd embedding
 pip install -e ".[dev]"
 FAKE_EMBEDDER=1 uvicorn app.main:app --reload --port 9000
-
-# Backend 単体
-cd backend
-dotnet run --project Portfolio.Web
 ```
 
 ---
@@ -96,9 +85,6 @@ dotnet run --project Portfolio.Web
 ## テスト
 
 ```bash
-# Backend
-cd backend && dotnet test
-
 # Embedding (FAKE モード)
 cd embedding && FAKE_EMBEDDER=1 pytest
 ```
@@ -123,7 +109,7 @@ CI（`.github/workflows/ci.yml`）は push / PR で同等のジョブを実行�
 - マルチテナント分離は Postgres **Row Level Security** で実装（[`design/04_security_multitenant.md`](design/04_security_multitenant.md)）
 - API キー類は **Supabase Vault (pgsodium)** で暗号化保管
 - LLM キーは **BYOK**（サーバ側に保持しない）
-- 依存性: **Dependabot** weekly + **CodeQL** で C# / Python 静的解析
+- 依存性: **Dependabot** weekly + **CodeQL** で Python 静的解析
 - PR 単位で `pr-validate.py`（プロンプトインジェクション検出）を CI で実行
 
 ---

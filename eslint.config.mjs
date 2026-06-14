@@ -1,5 +1,5 @@
-// Flat config (ESLint 9). Lints the TypeScript stack only; Python/C# have their own
-// tooling (ruff/mypy, dotnet format) and the spike is throwaway. Formatting is owned by
+// Flat config (ESLint 9). Lints the TypeScript stack only; Python has its own tooling
+// (ruff/mypy) and the spike is throwaway. Formatting is owned by
 // Prettier, so eslint-config-prettier is applied last to disable stylistic overlap.
 // See docs/conventions/typescript.md and react.md for the rationale behind each rule.
 import js from "@eslint/js";
@@ -14,7 +14,7 @@ import tseslint from "typescript-eslint";
 
 export default tseslint.config(
   {
-    // Not linted here: deps, build output, throwaway spike, and the legacy/non-TS stacks.
+    // Not linted here: deps, build output, the throwaway spike, and the Python service.
     ignores: [
       "**/node_modules/**",
       "**/dist/**",
@@ -22,7 +22,6 @@ export default tseslint.config(
       "**/coverage/**",
       "**/.next/**",
       "spike/**",
-      "backend/**",
       "embedding/**",
     ],
   },

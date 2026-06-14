@@ -64,8 +64,29 @@ def load_exclusions():
                 if line.strip() and not line.startswith("#")]
     return []
 
-def scan(text: str, source: str, exclusions: list) -> list[dict]:
+def scan(text: str, source: str, exclusions: list, added_only: bool = False) -> list[dict]:
     findings = []
+    # In a unified diff only newly-added lines can introduce content; removed (`-`) and
+    # context lines cannot, so scanning them produces false positives when a deleted line
+    # merely referenced an interpolated env value. In diff mode, scan only `+` lines (not
+    # the `+++` file header).
+    if added_only:
+        for idx, raw in enumerate(text.split("\n")):
+            if not raw.startswith("+") or raw.startswith("+++"):
+                continue
+            content = raw[1:]
+            for pattern in COMPILED:
+                for match in pattern.finditer(content):
+                    snippet = match.group(0)[:80]
+                    if any(ex.search(snippet) for ex in exclusions):
+                        continue
+                    findings.append({
+                        "source": source,
+                        "line": idx + 1,
+                        "pattern": pattern.pattern[:60],
+                        "snippet": snippet,
+                    })
+        return findings
     for pattern in COMPILED:
         for match in pattern.finditer(text):
             line_no = text[:match.start()].count("\n") + 1
@@ -85,7 +106,7 @@ def get_pr_body_from_gh() -> str:
     try:
         result = subprocess.run(
             ["gh", "pr", "view", "--json", "body", "-q", ".body"],
-            capture_output=True, text=True, timeout=10
+            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=10
         )
         return result.stdout.strip()
     except Exception:
@@ -95,7 +116,7 @@ def get_staged_diff() -> str:
     try:
         result = subprocess.run(
             ["git", "diff", "--staged"],
-            capture_output=True, text=True
+            capture_output=True, text=True, encoding="utf-8", errors="replace"
         )
         return result.stdout
     except Exception:
@@ -121,11 +142,11 @@ def main():
 
     if args.diff:
         diff = Path(args.diff).read_text(encoding="utf-8")
-        all_findings += scan(diff, "diff file", exclusions)
+        all_findings += scan(diff, "diff file", exclusions, added_only=True)
     elif args.staged:
         diff = get_staged_diff()
         if diff:
-            all_findings += scan(diff, "staged diff", exclusions)
+            all_findings += scan(diff, "staged diff", exclusions, added_only=True)
 
     if not all_findings:
         print("[pr-validate] PASS: No injection patterns detected.")

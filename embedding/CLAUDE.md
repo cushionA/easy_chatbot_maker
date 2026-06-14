@@ -44,7 +44,7 @@ uvicorn app.main:app --reload --port 9000
 ## Security
 - No secrets in code; read from environment.
 - Reject inputs with `Field(max_length=8000)` style bounds — long inputs slow embedding and can DoS.
-- CORS: leave **closed** by default. Only the Blazor backend on the internal network should call this service.
+- CORS: leave **closed** by default. Only the Node API on the internal network should call this service.
 
 ## Forbidden / avoid
 - `requests` for outbound (use `httpx`).

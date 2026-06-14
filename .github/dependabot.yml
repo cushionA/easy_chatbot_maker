@@ -12,11 +12,6 @@ updates:
         patterns: ["sentence-transformers", "numpy", "torch"]
 
   - package-ecosystem: docker
-    directory: /backend
-    schedule:
-      interval: weekly
-
-  - package-ecosystem: docker
     directory: /embedding
     schedule:
       interval: weekly
