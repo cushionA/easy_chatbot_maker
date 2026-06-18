@@ -6,7 +6,7 @@
 ## 1. データ量の実測
 
 - HN（30日, points>=5）: ___ 件 / リクエスト数 ___ / 所要 ___
-- Qiita（30日）: ___ 件 / ページ数 ___ / Rate-Remaining の推移 ___
+- Qiita（30日）: 11,439 件 / 120 ページ / Rate-Remaining 934 → 815（403/429 なし）
 - (任意) GitHub Trending: ___ 件/日
 
 ## 2. スキーマの過不足（design/06 CollectedItem / 03 documents・occurrences への反映）

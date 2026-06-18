@@ -67,7 +67,7 @@ Node22 + tsx の最小環境で「TS ファイルを直接実行できる」状�
 JP 側の源泉。タグ付き・人気度付きの記事 30 日分を raw JSONL に保存する。
 
 **前提確認**
-- [ ] Qiita のアクセストークンを発行（`qiita.com/settings/applications`、read 権限のみ・無料）→ `spike/.env` に `QIITA_TOKEN=...`（`.gitignore` に `.env` があるか確認）
+- [x] Qiita のアクセストークンを発行（`qiita.com/settings/applications`、read 権限のみ・無料）→ `spike/.env` に `QIITA_TOKEN=...`（`.gitignore` に `.env` があるか確認）
   - 無認証は 60 req/hr で 30 日分（~40 ページ）が窮屈。トークンで 1000 req/hr に
 
 **AI 依頼テンプレ**
@@ -83,8 +83,8 @@ spike/sources/qiita.ts を書いて。仕様:
 ```
 
 **完了確認**
-- [ ] `out/qiita-raw.jsonl` に 30 日分（数千件）
-- [ ] 403/429 にならず完走（Rate-Remaining の推移を findings.md §1 にメモ）
+- [x] `out/qiita-raw.jsonl` に 30 日分（数千件）
+- [x] 403/429 にならず完走（Rate-Remaining の推移を findings.md §1 にメモ）
 
 **詰まったら**
 - 401 → `Bearer ` プレフィクスと `.env` の読み込み（tsx は `node --env-file` 相当が無いので `process.loadEnvFile?.()` か手動パース）
